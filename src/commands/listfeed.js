@@ -5,17 +5,18 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('listfeed')
     .setDescription('List all zKillboard feeds in this channel'),
+
   async execute(interaction) {
-    await interaction.deferReply({ ephemeral: true });
     const feeds = getFeeds(interaction.channel.id);
-    const names = Object.keys(feeds);
-    if (!names.length) {
-      return interaction.editReply({ content: 'No feeds in this channel.' });
+    const feedNames = Object.keys(feeds);
+    if (!feedNames.length) {
+      return interaction.reply({ content: 'No feeds in this channel.', ephemeral: true });
     }
-    let msg = '**Feeds:**\n';
-    for (const name of names) {
-      msg += `\`${name}\`\n`;
+    let msg = '**Feeds in this channel:**\n';
+    for (const name of feedNames) {
+      const f = feeds[name];
+      msg += `• \`${name}\` — Filters: \`${JSON.stringify(f)}\`\n`;
     }
-    await interaction.editReply({ content: msg });
+    await interaction.reply({ content: msg, ephemeral: true });
   }
 };
