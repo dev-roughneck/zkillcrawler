@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { getFeeds, deleteFeed } = require('../feeds');
 const { stopZKillWebSocket } = require('../zkill/websocket');
 const { liveWebsockets } = require('./addfeed');
@@ -20,13 +20,39 @@ module.exports = {
     if (!feedNames.length) {
       return interaction.reply({ content: 'No feeds to remove in this channel.', ephemeral: true });
     }
-    let feedName = feedNames[0];
-    if (feedNames.length > 1) {
-      await interaction.reply({ content: `Feeds:\n${feedNames.map(f => `\`${f}\``).join('\n')}\nReply with the feed name to remove.`, ephemeral: true });
-      return;
+    // If only one feed, remove it directly
+    if (feedNames.length === 1) {
+      const feedName = feedNames[0];
+      stopZKillWebSocket(feedName, interaction.channel.id, liveWebsockets);
+      deleteFeed(interaction.channel.id, feedName);
+      return interaction.reply({ content: `Feed \`${feedName}\` removed.`, ephemeral: true });
+    }
+    // More than one feed: show a select menu
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('stopfeed-select')
+      .setPlaceholder('Select a feed to remove')
+      .addOptions(feedNames.map(name => ({
+        label: name,
+        value: name
+      })));
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+    await interaction.reply({
+      content: 'Select the feed you want to remove:',
+      components: [row],
+      ephemeral: true
+    });
+  },
+
+  // Handler for menu selection
+  async handleSelect(interaction) {
+    if (interaction.customId !== 'stopfeed-select') return;
+    const feedName = interaction.values[0];
+    const feeds = getFeeds(interaction.channel.id);
+    if (!feeds[feedName]) {
+      return interaction.update({ content: `Feed \`${feedName}\` not found.`, components: [] });
     }
     stopZKillWebSocket(feedName, interaction.channel.id, liveWebsockets);
     deleteFeed(interaction.channel.id, feedName);
-    await interaction.reply({ content: `Feed \`${feedName}\` removed.`, ephemeral: true });
+    await interaction.update({ content: `Feed \`${feedName}\` removed.`, components: [] });
   }
 };
