@@ -36,7 +36,6 @@ client.on('interactionCreate', async interaction => {
 
     // Modal submits
     else if (interaction.isModalSubmit()) {
-      // Addfeed modal steps
       if (interaction.customId.startsWith('addfeed-modal')) {
         const addfeed = require('./commands/addfeed');
         await addfeed.handleModal(interaction);
@@ -55,7 +54,6 @@ client.on('interactionCreate', async interaction => {
         const addfeed = require('./commands/addfeed');
         await addfeed.handleButton(interaction);
       }
-      // Add other button handlers here as needed
     }
 
     // String select menus (stopfeed)
@@ -64,11 +62,7 @@ client.on('interactionCreate', async interaction => {
         const stopfeed = require('./commands/stopfeed');
         await stopfeed.handleSelect(interaction);
       }
-      // Add more select menu handlers here as needed
     }
-
-    // Add more interaction types as needed (autocomplete, context menus, etc)
-
   } catch (err) {
     console.error('Interaction error:', err);
     try {
@@ -83,5 +77,4 @@ client.on('interactionCreate', async interaction => {
   }
 });
 
-// Start the bot
 client.login(process.env.DISCORD_TOKEN);
