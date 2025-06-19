@@ -1,34 +1,33 @@
 const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
-const redisq = require('../zkill/redisq');
+const { startRedisQPolling, stopRedisQPolling } = require('../zkill/redisq');
 const { formatKillmailEmbed } = require('../embeds');
 
-// In-memory storage for channel filters and WebSocket instances
+// In-memory storage for channel filters and polling
 const channelConfigs = new Map();
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('zkillsetup')
     .setDescription('Set up zKillboard killmail filters for this channel'),
+
   async execute(interaction) {
     // Modal with all filter fields
     const modal = new ModalBuilder()
       .setCustomId('zkill-filters')
       .setTitle('zKillboard Filter Setup');
-
     const fields = [
-      { id: 'region', label: 'Region (optional)', required: false },
-      { id: 'system', label: 'Solar System (optional)', required: false },
-      { id: 'alliance', label: 'Alliance (optional)', required: false },
-      { id: 'corp', label: 'Corporation (optional)', required: false },
-      { id: 'character', label: 'Character (optional)', required: false },
-      { id: 'shiptype', label: 'Defender Shiptype (optional)', required: false },
-      { id: 'attackers', label: 'Attacker Shiptype (optional)', required: false },
-      { id: 'defenders', label: 'Defender Shiptype (optional)', required: false },
-      { id: 'minisk', label: 'Minimum ISK Value (optional)', required: false },
-      { id: 'minattackers', label: 'Min # of Attackers (optional)', required: false },
-      { id: 'maxattackers', label: 'Max # of Attackers (optional)', required: false },
+      { id: 'region', label: 'Region (optional)' },
+      { id: 'system', label: 'Solar System (optional)' },
+      { id: 'alliance', label: 'Alliance (optional)' },
+      { id: 'corp', label: 'Corporation (optional)' },
+      { id: 'character', label: 'Character (optional)' },
+      { id: 'shiptype', label: 'Defender Shiptype (optional)' },
+      { id: 'attackers', label: 'Attacker Shiptype (optional)' },
+      { id: 'defenders', label: 'Defender Shiptype (optional)' },
+      { id: 'minisk', label: 'Minimum ISK Value (optional)' },
+      { id: 'minattackers', label: 'Min # of Attackers (optional)' },
+      { id: 'maxattackers', label: 'Max # of Attackers (optional)' },
     ];
-
     modal.addComponents(...fields.map(f =>
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -38,38 +37,48 @@ module.exports = {
           .setRequired(false)
       )
     ));
-
     await interaction.showModal(modal);
   },
 
   async handleModal(interaction) {
+    // Gather filters from modal
     const filters = {};
     for (const field of ['region', 'system', 'alliance', 'corp', 'character', 'shiptype', 'attackers', 'defenders', 'minisk', 'minattackers', 'maxattackers']) {
-      filters[field] = interaction.fields.getTextInputValue(field) || undefined;
+      const val = interaction.fields.getTextInputValue(field);
+      if (val && val.trim() !== '') filters[field] = val.trim();
     }
 
-    // Save config and start zkill stream for this channel
     const channelId = interaction.channel.id;
-    if (channelConfigs.has(channelId)) {
-      // Clean up previous websocket if already running
-      const ws = channelConfigs.get(channelId).ws;
-      if (ws) ws.close();
+    // Stop previous polling, if any
+    if (channelConfigs.has(channelId) && channelConfigs.get(channelId).pollTag) {
+      stopRedisQPolling(channelConfigs.get(channelId).pollTag, channelId, channelConfigs);
     }
 
-    // Start zKill WebSocket for this channel with filters
-    const ws = startZKillWebSocket(filters, async (killmail) => {
-      try {
-        const embed = formatKillmailEmbed(killmail);
-        await interaction.channel.send({ embeds: [embed] });
-      } catch (err) {
-        console.error('Failed to send embed:', err);
+    // Tag for this poll (unique for this channel)
+    const pollTag = `zkillsetup-${channelId}`;
+    // Start RedisQ polling for this channel
+    startRedisQPolling(
+      pollTag,
+      channelId,
+      filters,
+      interaction.channel,
+      pollTag,
+      channelConfigs,
+      async (killmail) => {
+        try {
+          const embed = formatKillmailEmbed(killmail);
+          await interaction.channel.send({ embeds: [embed] });
+        } catch (err) {
+          console.error('Failed to send embed:', err);
+        }
       }
-    });
+    );
 
-    channelConfigs.set(channelId, { filters, ws });
+    // Store config
+    channelConfigs.set(channelId, { filters, pollTag });
 
     await interaction.reply({
-      content: `Filters set!\n\`\`\`json\n${JSON.stringify(filters, null, 2)}\n\`\`\`\nKillmail stream started for this channel.`,
+      content: `Filters set!\n\`\`\`json\n${JSON.stringify(filters, null, 2)}\n\`\`\`\nKillmail polling started for this channel.`,
       ephemeral: true
     });
   }
