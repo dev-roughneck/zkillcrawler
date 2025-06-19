@@ -79,7 +79,7 @@ module.exports = {
 
     await interaction.reply({
       content: `Filters set!\n\`\`\`json\n${JSON.stringify(filters, null, 2)}\n\`\`\`\nKillmail polling started for this channel.`,
-      ephemeral: true
+      flags: 64
     });
   }
 };
