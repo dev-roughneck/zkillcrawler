@@ -35,23 +35,20 @@ async function normalizeFilters(input) {
     return out;
   }
 
-  const filters = {};
+   const filters = {};
   filters.region_id = await resolveField(input.region, eveu.resolveRegion);
   filters.system_id = await resolveField(input.system, eveu.resolveSystem);
   filters.shiptype_id = await resolveField(input.shiptype, eveu.resolveShipType);
   filters.alliance_id = await resolveField(input.alliance, eveu.resolveAlliance);
   filters.corp_id = await resolveField(input.corp, eveu.resolveCorporation);
   filters.character_id = await resolveField(input.character, eveu.resolveCharacter);
-
   filters.attacker_alliance_id = await resolveField(input.attacker_alliance, eveu.resolveAlliance);
   filters.attacker_corp_id = await resolveField(input.attacker_corp, eveu.resolveCorporation);
   filters.attacker_character_id = await resolveField(input.attacker_character, eveu.resolveCharacter);
   filters.attacker_shiptype_id = await resolveField(input.attacker_shiptype, eveu.resolveShipType);
-
   filters.minisk = input.minisk ? Number(input.minisk) : undefined;
   filters.minattackers = input.minattackers ? Number(input.minattackers) : undefined;
   filters.maxattackers = input.maxattackers ? Number(input.maxattackers) : undefined;
-
   return filters;
 }
 
