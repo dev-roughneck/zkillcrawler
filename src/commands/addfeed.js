@@ -1,5 +1,5 @@
-const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, InteractionType } = require('discord.js');
-const { getFeeds, saveFeed, feedExists } = require('../feeds');
+const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { getFeeds, setFeed, feedExists } = require('../feeds');
 const { startRedisQPolling, stopRedisQPolling } = require('../zkill/redisq');
 
 const livePolls = new Map();
@@ -176,8 +176,8 @@ module.exports = {
         maxattackers: interaction.fields.getTextInputValue('maxattackers').trim()
       };
 
-      // Save feed config
-      saveFeed(interaction.channel.id, feedName, filters);
+      // Save feed config (wrap in { filters } for DB)
+      setFeed(interaction.channel.id, feedName, { filters });
 
       // Start polling (stop previous if exists)
       stopRedisQPolling(feedName, interaction.channel.id, livePolls);
