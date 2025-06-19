@@ -16,11 +16,6 @@ for (const file of commandFiles) {
   }
 }
 
-const modalHandlers = {
-  'addfeed-modal': require('./commands/addfeed').handleModal,
-  'editfeed-modal': require('./commands/editfeed').handleModal,
-};
-
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
 });
@@ -40,16 +35,41 @@ client.on('interactionCreate', async interaction => {
       }
     }
   } else if (interaction.type === InteractionType.ModalSubmit) {
-    const handler = modalHandlers[interaction.customId];
-    if (handler) {
-      try {
-        await handler(interaction);
-      } catch (err) {
-        console.error(err);
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp({ content: 'There was an error processing the modal!', ephemeral: true });
-        } else {
-          await interaction.reply({ content: 'There was an error processing the modal!', ephemeral: true });
+    // Multi-step modal handling: match customId prefix (e.g. addfeed-modal-step1, addfeed-modal-step2, etc.)
+    let handled = false;
+    for (const [name, command] of client.commands) {
+      if (typeof command.handleModal === 'function' && interaction.customId.startsWith(name)) {
+        try {
+          await command.handleModal(interaction);
+          handled = true;
+          break;
+        } catch (err) {
+          console.error(err);
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: 'There was an error processing the modal!', ephemeral: true });
+          } else {
+            await interaction.reply({ content: 'There was an error processing the modal!', ephemeral: true });
+          }
+        }
+      }
+    }
+    // Backward compatibility: fallback to old single-modal IDs
+    if (!handled) {
+      const modalHandlers = {
+        'addfeed-modal': require('./commands/addfeed').handleModal,
+        'editfeed-modal': require('./commands/editfeed').handleModal,
+      };
+      const handler = modalHandlers[interaction.customId];
+      if (handler) {
+        try {
+          await handler(interaction);
+        } catch (err) {
+          console.error(err);
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: 'There was an error processing the modal!', ephemeral: true });
+          } else {
+            await interaction.reply({ content: 'There was an error processing the modal!', ephemeral: true });
+          }
         }
       }
     }
