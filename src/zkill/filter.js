@@ -1,62 +1,66 @@
-function parseFilterField(val) {
-  if (!val) return [];
-  if (typeof val === 'string') val = val.split(',').map(v => v.trim()).filter(Boolean);
-  return Array.isArray(val) ? val : [val];
-}
-
-function matchField(candidate, filterVals) {
-  if (!filterVals.length) return true;
-  let match = false;
-  for (const val of filterVals) {
-    if (val.startsWith('!')) {
-      if (String(candidate) === val.slice(1)) return false;
-    } else {
-      if (String(candidate) === val) match = true;
-    }
-  }
-  if (filterVals.every(v => v.startsWith('!'))) return true;
-  return match;
-}
-
-function matchAnyAttackerField(attackers, key, filterVals) {
-  if (!filterVals.length) return true;
-  if (!Array.isArray(attackers) || attackers.length === 0) return false;
-  let anyMatch = false;
-  for (const attacker of attackers) {
-    if (matchField(attacker[key], filterVals)) {
-      anyMatch = true;
-      break;
-    }
-  }
-  if (filterVals.every(v => v.startsWith('!'))) {
-    for (const attacker of attackers) {
-      for (const val of filterVals) {
-        if (String(attacker[key]) === val.slice(1)) return false;
-      }
-    }
-    return true;
-  }
-  return anyMatch;
-}
-
+/**
+ * Determines if a killmail matches the given filters.
+ * The filter object uses normalized fields (arrays for IDs, numbers for minisk/minattackers/maxattackers).
+ *
+ * @param {Object} killmail - The killmail object from RedisQ/zkillboard.
+ * @param {Object} filters - The normalized filters object.
+ * @returns {boolean} True if the killmail matches the filters, false otherwise.
+ */
 function filterKillmail(killmail, filters) {
-  if (filters.minisk && killmail.zkb && killmail.zkb.totalValue < Number(filters.minisk)) return false;
-  if (!matchField(killmail.region_id, parseFilterField(filters.region_id))) return false;
-  if (!matchField(killmail.solar_system_id, parseFilterField(filters.system_id))) return false;
-  if (!matchField(killmail.victim.alliance_id, parseFilterField(filters.alliance_id))) return false;
-  if (!matchField(killmail.victim.corporation_id, parseFilterField(filters.corp_id))) return false;
-  if (!matchField(killmail.victim.character_id, parseFilterField(filters.character_id))) return false;
-  if (!matchField(killmail.victim.ship_type_id, parseFilterField(filters.shiptype_id))) return false;
+  // If filters is empty or all arrays are empty and all numbers undefined, match everything
+  const hasActiveFilters = Object.values(filters).some(
+    v => (Array.isArray(v) && v.length > 0) || (typeof v === 'number')
+  );
+  if (!hasActiveFilters) return true;
 
-  if (!matchAnyAttackerField(killmail.attackers, 'alliance_id', parseFilterField(filters.attacker_alliance_id))) return false;
-  if (!matchAnyAttackerField(killmail.attackers, 'corporation_id', parseFilterField(filters.attacker_corp_id))) return false;
-  if (!matchAnyAttackerField(killmail.attackers, 'character_id', parseFilterField(filters.attacker_character_id))) return false;
-  if (!matchAnyAttackerField(killmail.attackers, 'ship_type_id', parseFilterField(filters.attacker_shiptype_id))) return false;
+  const victim = killmail.victim || {};
+  const attackers = killmail.attackers || [];
+  const zkb = killmail.zkb || {};
 
-  if (filters.minattackers && killmail.attackers.length < Number(filters.minattackers)) return false;
-  if (filters.maxattackers && killmail.attackers.length > Number(filters.maxattackers)) return false;
+  // Helper to match a value against allowed IDs (if array is empty, pass)
+  function matchId(val, arr) {
+    if (!arr || arr.length === 0) return true;
+    return arr.includes(val);
+  }
+
+  // Region/system/shiptype filters (victim)
+  if (!matchId(killmail.region_id, filters.region_id)) return false;
+  if (!matchId(killmail.solar_system_id, filters.system_id)) return false;
+  if (!matchId(victim.ship_type_id, filters.shiptype_id)) return false;
+
+  // Alliance/corp/char filters (victim)
+  if (!matchId(victim.alliance_id, filters.alliance_id)) return false;
+  if (!matchId(victim.corporation_id, filters.corp_id)) return false;
+  if (!matchId(victim.character_id, filters.character_id)) return false;
+
+  // Attacker alliance/corp/char/shiptype filters (on any attacker)
+  if (filters.attacker_alliance_id && filters.attacker_alliance_id.length > 0) {
+    if (!attackers.some(a => matchId(a.alliance_id, filters.attacker_alliance_id))) return false;
+  }
+  if (filters.attacker_corp_id && filters.attacker_corp_id.length > 0) {
+    if (!attackers.some(a => matchId(a.corporation_id, filters.attacker_corp_id))) return false;
+  }
+  if (filters.attacker_character_id && filters.attacker_character_id.length > 0) {
+    if (!attackers.some(a => matchId(a.character_id, filters.attacker_character_id))) return false;
+  }
+  if (filters.attacker_shiptype_id && filters.attacker_shiptype_id.length > 0) {
+    if (!attackers.some(a => matchId(a.ship_type_id, filters.attacker_shiptype_id))) return false;
+  }
+
+  // minisk (minimum ISK value)
+  if (typeof filters.minisk === 'number' && zkb.totalValue !== undefined) {
+    if (zkb.totalValue < filters.minisk) return false;
+  }
+
+  // minattackers / maxattackers (number of attackers)
+  if (typeof filters.minattackers === 'number') {
+    if (attackers.length < filters.minattackers) return false;
+  }
+  if (typeof filters.maxattackers === 'number') {
+    if (attackers.length > filters.maxattackers) return false;
+  }
 
   return true;
 }
 
-module.exports = { filterKillmail, parseFilterField, matchField, matchAnyAttackerField };
+module.exports = { filterKillmail };
