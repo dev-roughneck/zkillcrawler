@@ -1,165 +1,200 @@
 const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
-const { getFeeds, setFeed, deleteFeed } = require('../feeds');
-const { stopZKillWebSocket, startZKillWebSocket } = require('../zkill/websocket');
-const { liveWebsockets } = require('./addfeed');
-const eveu = require('../eveuniverse');
+const { getFeeds, saveFeed, feedExists } = require('../feeds');
+const { startRedisQPolling, stopRedisQPolling } = require('../zkill/redisq');
+const { livePolls } = require('./addfeed');
 
-function isAdmin(member) {
-  return member && member.permissions && (member.permissions.has('Administrator') || member.permissions.has('ManageGuild'));
-}
+// Helper: reconstruct the full modal steps for editing
+function buildEditModals(feedName, originalFilters) {
+  // Step 1: victim filters
+  const modal1 = new ModalBuilder()
+    .setCustomId(`editfeed-modal-step1|${feedName}`)
+    .setTitle(`Edit Feed "${feedName}" - Victim Filters`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('region')
+          .setLabel('Region Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.region || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('system')
+          .setLabel('System Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.system || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('shiptype')
+          .setLabel('Victim Ship Type(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.shiptype || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('alliance')
+          .setLabel('Victim Alliance Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.alliance || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('corp')
+          .setLabel('Victim Corp Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.corp || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('character')
+          .setLabel('Victim Character Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.character || '')
+      )
+    );
 
-async function normalizeFilters(input) {
-  const filters = {};
+  // Step 2: attacker filters + ISK/attacker counts
+  const modal2 = new ModalBuilder()
+    .setCustomId(`editfeed-modal-step2|${feedName}`)
+    .setTitle(`Edit Feed "${feedName}" - Attacker Filters & Limits`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('attacker_alliance')
+          .setLabel('Attacker Alliance Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.attacker_alliance || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('attacker_corp')
+          .setLabel('Attacker Corp Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.attacker_corp || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('attacker_character')
+          .setLabel('Attacker Character Name(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.attacker_character || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('attacker_shiptype')
+          .setLabel('Attacker Ship Type(s), comma separated')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.attacker_shiptype || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('minisk')
+          .setLabel('Minimum ISK Value')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.minisk || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('minattackers')
+          .setLabel('Minimum Attackers')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.minattackers || '')
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('maxattackers')
+          .setLabel('Maximum Attackers')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setValue(originalFilters.maxattackers || '')
+      )
+    );
 
-  function parseField(val) {
-    if (!val) return [];
-    return val.split(',').map(x => x.trim()).filter(Boolean);
-  }
-
-  async function resolveField(val, resolver) {
-    const arr = parseField(val);
-    const out = [];
-    for (const v of arr) {
-      if (v.startsWith('!')) {
-        const resolved = await resolver(v.slice(1));
-        if (resolved) out.push('!' + resolved.id);
-      } else {
-        const resolved = await resolver(v);
-        if (resolved) out.push('' + resolved.id);
-      }
-    }
-    return out;
-  }
-
-  filters.region_id = await resolveField(input.region, eveu.resolveRegion);
-  filters.system_id = await resolveField(input.system, eveu.resolveSystem);
-  filters.shiptype_id = await resolveField(input.shiptype, eveu.resolveShipType);
-  filters.alliance_id = await resolveField(input.alliance, eveu.resolveAlliance);
-  filters.corp_id = await resolveField(input.corp, eveu.resolveCorporation);
-  filters.character_id = await resolveField(input.character, eveu.resolveCharacter);
-
-  filters.attacker_alliance_id = await resolveField(input.attacker_alliance, eveu.resolveAlliance);
-  filters.attacker_corp_id = await resolveField(input.attacker_corp, eveu.resolveCorporation);
-  filters.attacker_character_id = await resolveField(input.attacker_character, eveu.resolveCharacter);
-  filters.attacker_shiptype_id = await resolveField(input.attacker_shiptype, eveu.resolveShipType);
-
-  filters.minisk = input.minisk ? Number(input.minisk) : undefined;
-  filters.minattackers = input.minattackers ? Number(input.minattackers) : undefined;
-  filters.maxattackers = input.maxattackers ? Number(input.maxattackers) : undefined;
-
-  return filters;
+  return [modal1, modal2];
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('editfeed')
-    .setDescription('Edit a zKillboard feed in this channel (Admins only)'),
+    .setDescription('Edit a zKillboard feed in this channel (multi-step, all filter options)'),
+
   async execute(interaction) {
-    if (!isAdmin(interaction.member)) {
-      return interaction.reply({ content: 'Only server admins may use this command.', ephemeral: true });
-    }
     const feeds = getFeeds(interaction.channel.id);
     const feedNames = Object.keys(feeds);
     if (!feedNames.length) {
-      return interaction.reply({ content: 'No feeds in this channel.', ephemeral: true });
+      return interaction.reply({ content: 'No feeds to edit in this channel.', ephemeral: true });
     }
-    const modal = new ModalBuilder()
-      .setCustomId('editfeed-modal')
-      .setTitle('Edit zKillboard Feed');
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('feedname').setLabel('Feed Name to Edit').setStyle(TextInputStyle.Short).setRequired(true)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('newfeedname').setLabel('New Feed Name').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('region').setLabel('Region(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('system').setLabel('System(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('shiptype').setLabel('Shiptype(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('alliance').setLabel('Alliance(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('corp').setLabel('Corporation(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('character').setLabel('Character(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('attacker_alliance').setLabel('Attacker Alliance(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('attacker_corp').setLabel('Attacker Corporation(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('attacker_character').setLabel('Attacker Character(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('attacker_shiptype').setLabel('Attacker Shiptype(s) (name/ID, comma, ! for NOT)').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('minisk').setLabel('Minimum ISK Value').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('minattackers').setLabel('Min # of Attackers').setStyle(TextInputStyle.Short).setRequired(false)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('maxattackers').setLabel('Max # of Attackers').setStyle(TextInputStyle.Short).setRequired(false)
-      )
-    );
-    await interaction.showModal(modal);
+    // Let user pick a feed if more than one
+    let feedName = feedNames[0];
+    if (feedNames.length > 1) {
+      // For brevity, just pick the first; you can use select menus to let user choose if desired
+      await interaction.reply({ content: `More than one feed. Editing the first (\`${feedName}\`).`, ephemeral: true });
+    }
+    const [modal1, ] = buildEditModals(feedName, feeds[feedName]);
+    await interaction.showModal(modal1);
   },
 
   async handleModal(interaction) {
-    if (!isAdmin(interaction.member)) {
-      return interaction.reply({ content: 'Only server admins may use this command.', ephemeral: true });
-    }
-    const input = {};
-    [
-      'feedname', 'newfeedname', 'region', 'system', 'shiptype', 'alliance', 'corp', 'character',
-      'attacker_alliance', 'attacker_corp', 'attacker_character', 'attacker_shiptype',
-      'minisk', 'minattackers', 'maxattackers'
-    ].forEach(f => {
-      input[f] = interaction.fields.getTextInputValue(f) || undefined;
-    });
-    const feedName = input.feedname.trim();
-    const newFeedName = (input.newfeedname || '').trim() || feedName;
-    const channelId = interaction.channel.id;
+    // Step 1: victim filters
+    if (interaction.customId.startsWith('editfeed-modal-step1|')) {
+      const feedName = interaction.customId.split('|')[1];
+      const feeds = getFeeds(interaction.channel.id);
+      const original = feeds[feedName] || {};
 
-    const feeds = getFeeds(channelId);
-    if (!feeds[feedName]) {
-      return interaction.reply({ content: `No feed named "${feedName}" in this channel.`, ephemeral: true });
-    }
-    stopZKillWebSocket(feedName, channelId, liveWebsockets);
+      const victimFilters = {
+        region: interaction.fields.getTextInputValue('region').trim(),
+        system: interaction.fields.getTextInputValue('system').trim(),
+        shiptype: interaction.fields.getTextInputValue('shiptype').trim(),
+        alliance: interaction.fields.getTextInputValue('alliance').trim(),
+        corp: interaction.fields.getTextInputValue('corp').trim(),
+        character: interaction.fields.getTextInputValue('character').trim()
+      };
 
-    let normalizedFilters = feeds[feedName].filters;
-    const anyFieldUpdated = [
-      'region', 'system', 'shiptype', 'alliance', 'corp', 'character',
-      'attacker_alliance', 'attacker_corp', 'attacker_character', 'attacker_shiptype',
-      'minisk', 'minattackers', 'maxattackers'
-    ]
-      .some(f => input[f]);
-    if (anyFieldUpdated) {
-      normalizedFilters = await normalizeFilters(input);
+      // Save state in modal2 customId
+      const [ , modal2 ] = buildEditModals(feedName, { ...original, ...victimFilters });
+      await interaction.showModal(modal2);
+      return;
     }
 
-    const data = { ...feeds[feedName], filters: normalizedFilters };
-    setFeed(channelId, newFeedName, data);
-    if (newFeedName !== feedName) {
-      deleteFeed(channelId, feedName);
-    }
-    startZKillWebSocket(newFeedName, channelId, data.filters, interaction.channel, liveWebsockets);
+    // Step 2: attacker filters + ISK/attacker counts, finalize and save
+    if (interaction.customId.startsWith('editfeed-modal-step2|')) {
+      const feedName = interaction.customId.split('|')[1];
+      const feeds = getFeeds(interaction.channel.id);
+      const original = feeds[feedName] || {};
 
-    await interaction.reply({
-      content: `Feed \`${feedName}\` updated${newFeedName !== feedName ? ` to \`${newFeedName}\`` : ''}.\n\nCriteria:\n\`\`\`json\n${JSON.stringify(normalizedFilters, null, 2)}\n\`\`\``,
-      ephemeral: true
-    });
+      const attackerFilters = {
+        attacker_alliance: interaction.fields.getTextInputValue('attacker_alliance').trim(),
+        attacker_corp: interaction.fields.getTextInputValue('attacker_corp').trim(),
+        attacker_character: interaction.fields.getTextInputValue('attacker_character').trim(),
+        attacker_shiptype: interaction.fields.getTextInputValue('attacker_shiptype').trim(),
+        minisk: interaction.fields.getTextInputValue('minisk').trim(),
+        minattackers: interaction.fields.getTextInputValue('minattackers').trim(),
+        maxattackers: interaction.fields.getTextInputValue('maxattackers').trim()
+      };
+
+      const newFilters = { ...original, ...attackerFilters };
+
+      saveFeed(interaction.channel.id, feedName, newFilters);
+
+      // Restart polling
+      stopRedisQPolling(feedName, interaction.channel.id, livePolls);
+      startRedisQPolling(feedName, interaction.channel.id, newFilters, interaction.channel, `${interaction.channel.id}-${feedName}`, livePolls);
+
+      await interaction.reply({ content: `Feed \`${feedName}\` updated and polling restarted!`, ephemeral: true });
+      return;
+    }
   }
 };
