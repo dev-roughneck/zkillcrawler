@@ -13,7 +13,7 @@ function isAdmin(member) {
 }
 
 async function normalizeFilters(input) {
-  const filters = {};
+  console.log("Alliance input to resolver:", input.alliance);
 
   function parseField(val) {
     if (!val) return [];
@@ -21,19 +21,21 @@ async function normalizeFilters(input) {
   }
 
   async function resolveField(val, resolver) {
-    const arr = parseField(val);
-    const out = [];
-    for (const v of arr) {
-      if (v.startsWith('!')) {
-        const resolved = await resolver(v.slice(1));
-        if (resolved) out.push('!' + resolved.id);
-      } else {
-        const resolved = await resolver(v);
-        if (resolved) out.push('' + resolved.id);
-      }
+  const arr = parseField(val);
+  const out = [];
+  for (const v of arr) {
+    if (v.startsWith('!')) {
+      const resolved = await resolver(v.slice(1));
+      console.log(`Resolving "${v}" with resolver:`, resolved);
+      if (resolved) out.push('!' + resolved.id);
+    } else {
+      const resolved = await resolver(v);
+      console.log(`Resolving "${v}" with resolver:`, resolved);
+      if (resolved) out.push('' + resolved.id);
     }
-    return out;
   }
+  return out;
+}
 
   filters.region_id = await resolveField(input.region, eveu.resolveRegion);
   filters.system_id = await resolveField(input.system, eveu.resolveSystem);
@@ -148,6 +150,10 @@ module.exports = {
       input.maxattackers = interaction.fields.getTextInputValue('maxattackers');
       addfeedSessions.delete(interaction.user.id);
 
+      console.log("Raw input before normalization:", input);
+  const normalizedFilters = await normalizeFilters(input);
+  console.log("Normalized filters:", normalizedFilters);
+      
       const feedName = input.feedname.trim();
       const channelId = interaction.channel.id;
       const feeds = getFeeds(channelId);
