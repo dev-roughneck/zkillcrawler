@@ -28,42 +28,46 @@ client.once('ready', () => {
 // Main interaction handler
 client.on('interactionCreate', async interaction => {
   try {
-    // Handle slash commands
+    // Slash commands
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);
-      if (!command) return;
-      await command.execute(interaction);
+      if (command) await command.execute(interaction);
     }
 
-    // Handle modals from commands (editfeed, zkillsetup, addfeed, etc)
+    // Modal submits
     else if (interaction.isModalSubmit()) {
-      // Route to command file based on modal customId prefix
+      // Addfeed modal steps
       if (interaction.customId.startsWith('addfeed-modal')) {
-        // addfeed.js exports a handleModal
         const addfeed = require('./commands/addfeed');
         await addfeed.handleModal(interaction);
       } else if (interaction.customId === 'zkill-filters') {
-        // zkillsetup.js exports a handleModal
         const zkillsetup = require('./commands/zkillsetup');
         await zkillsetup.handleModal(interaction);
       } else if (interaction.customId.startsWith('editfeed-modal')) {
-        // editfeed.js exports a handleModal
         const editfeed = require('./commands/editfeed');
         await editfeed.handleModal(interaction);
       }
     }
 
-    // Handle select menus
+    // Button clicks (step buttons for addfeed)
+    else if (interaction.isButton()) {
+      if (interaction.customId.startsWith('addfeed-step')) {
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleButton(interaction);
+      }
+      // Add other button handlers here as needed
+    }
+
+    // String select menus (stopfeed)
     else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'stopfeed-select') {
-        // stopfeed.js exports a handleSelect
         const stopfeed = require('./commands/stopfeed');
         await stopfeed.handleSelect(interaction);
       }
-      // Add more select menu handlers if needed
+      // Add more select menu handlers here as needed
     }
 
-    // Add other interaction types as needed (buttons, etc)
+    // Add more interaction types as needed (autocomplete, context menus, etc)
 
   } catch (err) {
     console.error('Interaction error:', err);
