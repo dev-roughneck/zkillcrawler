@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { getFeeds, saveFeed, feedExists } = require('../feeds');
 const { startRedisQPolling, stopRedisQPolling } = require('../zkill/redisq');
 const { livePolls } = require('./addfeed');
@@ -137,16 +137,41 @@ module.exports = {
     if (!feedNames.length) {
       return interaction.reply({ content: 'No feeds to edit in this channel.', ephemeral: true });
     }
-    // Let user pick a feed if more than one
-    let feedName = feedNames[0];
+    // If more than one feed, let user choose which to edit
     if (feedNames.length > 1) {
-      // For brevity, just pick the first; you can use select menus to let user choose if desired
-      await interaction.reply({ content: `More than one feed. Editing the first (\`${feedName}\`).`, ephemeral: true });
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('editfeed-select')
+        .setPlaceholder('Select a feed to edit')
+        .addOptions(feedNames.map(name => ({
+          label: name,
+          value: name
+        })));
+      const row = new ActionRowBuilder().addComponents(selectMenu);
+      return interaction.reply({
+        content: 'Select the feed you want to edit:',
+        components: [row],
+        ephemeral: true
+      });
+    }
+    // Only one feed, start modal immediately
+    const feedName = feedNames[0];
+    const [modal1, ] = buildEditModals(feedName, feeds[feedName]);
+    await interaction.showModal(modal1);
+  },
+
+  // Handle select menu for feed editing
+  async handleSelect(interaction) {
+    if (interaction.customId !== 'editfeed-select') return;
+    const feedName = interaction.values[0];
+    const feeds = getFeeds(interaction.channel.id);
+    if (!feeds[feedName]) {
+      return interaction.update({ content: `Feed \`${feedName}\` not found.`, components: [] });
     }
     const [modal1, ] = buildEditModals(feedName, feeds[feedName]);
     await interaction.showModal(modal1);
   },
 
+  // Modal steps
   async handleModal(interaction) {
     // Step 1: victim filters
     if (interaction.customId.startsWith('editfeed-modal-step1|')) {
