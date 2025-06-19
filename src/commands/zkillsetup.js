@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
-const { startZKillWebSocket } = require('../zkill/websocket');
+const redisq = require('../zkill/redisq');
 const { formatKillmailEmbed } = require('../embeds');
 
 // In-memory storage for channel filters and WebSocket instances
