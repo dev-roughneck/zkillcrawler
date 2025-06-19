@@ -21,22 +21,23 @@ async function normalizeFilters(input) {
   }
 
   async function resolveField(val, resolver) {
-  const arr = parseField(val);
-  const out = [];
-  for (const v of arr) {
-    if (v.startsWith('!')) {
-      const resolved = await resolver(v.slice(1));
-      console.log(`Resolving "${v}" with resolver:`, resolved);
-      if (resolved) out.push('!' + resolved.id);
-    } else {
-      const resolved = await resolver(v);
-      console.log(`Resolving "${v}" with resolver:`, resolved);
-      if (resolved) out.push('' + resolved.id);
+    const arr = parseField(val);
+    const out = [];
+    for (const v of arr) {
+      if (v.startsWith('!')) {
+        const resolved = await resolver(v.slice(1));
+        console.log(`Resolving "${v}" with resolver:`, resolved);
+        if (resolved) out.push('!' + resolved.id);
+      } else {
+        const resolved = await resolver(v);
+        console.log(`Resolving "${v}" with resolver:`, resolved);
+        if (resolved) out.push('' + resolved.id);
+      }
     }
+    return out;
   }
-  return out;
-}
 
+  const filters = {};
   filters.region_id = await resolveField(input.region, eveu.resolveRegion);
   filters.system_id = await resolveField(input.system, eveu.resolveSystem);
   filters.shiptype_id = await resolveField(input.shiptype, eveu.resolveShipType);
@@ -151,9 +152,9 @@ module.exports = {
       addfeedSessions.delete(interaction.user.id);
 
       console.log("Raw input before normalization:", input);
-  const normalizedFilters = await normalizeFilters(input);
-  console.log("Normalized filters:", normalizedFilters);
-      
+      const normalizedFilters = await normalizeFilters(input);
+      console.log("Normalized filters:", normalizedFilters);
+
       const feedName = input.feedname.trim();
       const channelId = interaction.channel.id;
       const feeds = getFeeds(channelId);
@@ -161,8 +162,6 @@ module.exports = {
       if (feeds[feedName]) {
         return interaction.reply({ content: `A feed with the name "${feedName}" already exists in this channel.`, ephemeral: true });
       }
-
-      const normalizedFilters = await normalizeFilters(input);
 
       setFeed(channelId, feedName, { filters: normalizedFilters });
       startZKillWebSocket(feedName, channelId, normalizedFilters, interaction.channel, liveWebsockets);
