@@ -32,10 +32,10 @@ module.exports = {
     if (interaction.customId === 'addfeed-modal-step1') {
       const feedName = interaction.fields.getTextInputValue('feedname').trim();
       if (!feedName) {
-        return interaction.reply({ content: 'Feed name is required.', ephemeral: true });
+        return interaction.reply({ content: 'Feed name is required.', flags: 64 });
       }
       if (feedExists(interaction.channel.id, feedName)) {
-        return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
+        return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, flags: 64 });
       }
       // Show STEP 2: Victim filters
       const modal = new ModalBuilder()
@@ -85,8 +85,7 @@ module.exports = {
               .setRequired(false)
           )
         );
-      return interaction.reply({ content: 'Feed name accepted! Now set victim filters.', ephemeral: true, components: [], fetchReply: true })
-        .then(() => interaction.showModal(modal));
+      return await interaction.showModal(modal);
     }
 
     // STEP 2: Attacker filters
@@ -156,8 +155,7 @@ module.exports = {
               .setRequired(false)
           )
         );
-      return interaction.reply({ content: 'Victim filters accepted! Now set attacker filters.', ephemeral: true, components: [], fetchReply: true })
-        .then(() => interaction.showModal(modal));
+      return await interaction.showModal(modal);
     }
 
     // STEP 3: Finalize and save feed
@@ -183,7 +181,7 @@ module.exports = {
       stopRedisQPolling(feedName, interaction.channel.id, livePolls);
       startRedisQPolling(feedName, interaction.channel.id, filters, interaction.channel, `${interaction.channel.id}-${feedName}`, livePolls);
 
-      return interaction.reply({ content: `Feed \`${feedName}\` created and polling started!`, ephemeral: true });
+      return interaction.reply({ content: `Feed \`${feedName}\` created and polling started!`, flags: 64 });
     }
   },
 
