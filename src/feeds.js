@@ -29,7 +29,13 @@ function listFeeds(channelId) {
   return rows.map(r => r.feed_name);
 }
 
+// Returns true if the feed with this name exists for this channel
+function feedExists(channelId, feedName) {
+  const row = db.prepare('SELECT 1 FROM feeds WHERE channel_id = ? AND feed_name = ?').get(channelId, feedName);
+  return !!row;
+}
+
 // Kept for API compatibility, no-op
 function reloadFeeds() {}
 
-module.exports = { getFeeds, getFeed, setFeed, deleteFeed, listFeeds, reloadFeeds };
+module.exports = { getFeeds, getFeed, setFeed, deleteFeed, listFeeds, feedExists, reloadFeeds };
