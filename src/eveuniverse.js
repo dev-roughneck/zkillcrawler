@@ -1,116 +1,134 @@
 let fetchFn;
 try {
-  fetchFn = fetch; // Try native fetch (Node 18+)
+  fetchFn = fetch; // Node 18+
 } catch (e) {
-  fetchFn = require('node-fetch'); // Fallback to node-fetch
-}
-const db = require('./db');
-
-const BASE_URL = 'https://eveuniverse.app/api/';
-
-function cacheGet(endpoint, queryOrId) {
-  const row = db.prepare('SELECT data_json FROM eve_cache WHERE endpoint = ? AND query = ?')
-    .get(endpoint, queryOrId || '');
-  return row ? JSON.parse(row.data_json) : null;
+  fetchFn = require('node-fetch');
 }
 
-function cacheSet(endpoint, queryOrId, data) {
-  db.prepare('INSERT OR REPLACE INTO eve_cache (endpoint, query, data_json) VALUES (?, ?, ?)')
-    .run(endpoint, queryOrId || '', JSON.stringify(data));
+const ESI_BASE = 'https://esi.evetech.net/latest';
+
+// Helper to resolve a numeric ID to a name/type/category using /universe/names/
+async function resolveESIById(id) {
+  const res = await fetchFn(`${ESI_BASE}/universe/names/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([Number(id)]),
+  });
+  if (!res.ok) throw new Error(`ESI error: ${res.status}`);
+  const data = await res.json();
+  return data && data.length > 0 ? data[0] : null;
 }
 
-async function cachedFetch(endpoint, queryOrId, byId = false) {
-  const cached = cacheGet(endpoint, queryOrId);
-  if (cached) return cached;
-
-  let url;
-  if (byId) {
-    url = BASE_URL + endpoint + `/${queryOrId}/`;
-  } else {
-    url = BASE_URL + endpoint + '/';
-    if (queryOrId) url += `?name=${encodeURIComponent(queryOrId)}`;
-  }
-
-  let data = null;
-  try {
-    const res = await fetchFn(url);
-    if (!res.ok) return null;
-    data = await res.json();
-    cacheSet(endpoint, queryOrId, data);
-  } catch (err) {
-    console.error('[EVEUNIVERSE] API error:', endpoint, queryOrId, err);
-  }
-  return data;
-}
-
-async function resolveRegion(input) {
-  if (!input) return null;
-  if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('regions', input, true);
-    return data && data.id ? data : null;
-  }
-  const data = await cachedFetch('regions', input);
-  return data && data.items && data.items.length > 0 ? data.items[0] : null;
-}
-
-async function resolveSystem(input) {
-  if (!input) return null;
-  if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('solar_systems', input, true);
-    return data && data.id ? data : null;
-  }
-  const data = await cachedFetch('solar_systems', input);
-  return data && data.items && data.items.length > 0 ? data.items[0] : null;
-}
-
-async function resolveShipType(input) {
-  if (!input) return null;
-  if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('types', input, true);
-    return data && data.id ? data : null;
-  }
-  const data = await cachedFetch('types', input);
-  if (data && data.items && data.items.length > 0) {
-    return data.items.find(t => t.category_id === 6 && t.published) || data.items[0];
+// Helper to resolve a name to ID using ESI /search/
+async function resolveESIByName(name, category) {
+  const res = await fetchFn(
+    `${ESI_BASE}/search/?categories=${category}&search=${encodeURIComponent(name)}&strict=true`
+  );
+  if (!res.ok) throw new Error(`ESI error: ${res.status}`);
+  const data = await res.json();
+  if (data && data[category] && data[category].length > 0) {
+    const id = data[category][0];
+    return resolveESIById(id);
   }
   return null;
 }
 
+// Entity resolvers
+
 async function resolveAlliance(input) {
   if (!input) return null;
   if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('alliances', input, true);
-    return data && data.id ? data : null;
+    const data = await resolveESIById(input);
+    if (data && data.category === 'alliance') return { id: data.id, name: data.name };
+    return null;
   }
-  const data = await cachedFetch('alliances', input);
-  return data && data.items && data.items.length > 0 ? data.items[0] : null;
+  // Lookup by name
+  const data = await resolveESIByName(input, 'alliance');
+  if (data && data.category === 'alliance') return { id: data.id, name: data.name };
+  return null;
 }
 
 async function resolveCorporation(input) {
   if (!input) return null;
   if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('corporations', input, true);
-    return data && data.id ? data : null;
+    const data = await resolveESIById(input);
+    if (data && data.category === 'corporation') return { id: data.id, name: data.name };
+    return null;
   }
-  const data = await cachedFetch('corporations', input);
-  return data && data.items && data.items.length > 0 ? data.items[0] : null;
+  const data = await resolveESIByName(input, 'corporation');
+  if (data && data.category === 'corporation') return { id: data.id, name: data.name };
+  return null;
 }
 
 async function resolveCharacter(input) {
   if (!input) return null;
   if (/^\d+$/.test(input)) {
-    const data = await cachedFetch('characters', input, true);
-    return data && data.id ? data : null;
+    const data = await resolveESIById(input);
+    if (data && data.category === 'character') return { id: data.id, name: data.name };
+    return null;
   }
-  const data = await cachedFetch('characters', input);
-  return data && data.items && data.items.length > 0 ? data.items[0] : null;
+  const data = await resolveESIByName(input, 'character');
+  if (data && data.category === 'character') return { id: data.id, name: data.name };
+  return null;
+}
+
+async function resolveRegion(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) {
+    const data = await resolveESIById(input);
+    if (data && data.category === 'region') return { id: data.id, name: data.name };
+    return null;
+  }
+  const data = await resolveESIByName(input, 'region');
+  if (data && data.category === 'region') return { id: data.id, name: data.name };
+  return null;
+}
+
+async function resolveSystem(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) {
+    const data = await resolveESIById(input);
+    if (data && data.category === 'solar_system') return { id: data.id, name: data.name };
+    return null;
+  }
+  const data = await resolveESIByName(input, 'solar_system');
+  if (data && data.category === 'solar_system') return { id: data.id, name: data.name };
+  return null;
+}
+
+async function resolveShipType(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) {
+    // ESI doesn't return category for type_id, so we fetch the type info
+    const res = await fetchFn(`${ESI_BASE}/universe/types/${input}/`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Category 6 = Ship
+    if (data && data.category_id === 6) return { id: data.type_id, name: data.name };
+    return null;
+  }
+  // Fuzzy search (strict=false) in /search/ for 'inventory_type'
+  const res = await fetchFn(
+    `${ESI_BASE}/search/?categories=inventory_type&search=${encodeURIComponent(input)}&strict=false`
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (data && data.inventory_type && data.inventory_type.length > 0) {
+    for (const typeId of data.inventory_type) {
+      const res2 = await fetchFn(`${ESI_BASE}/universe/types/${typeId}/`);
+      if (!res2.ok) continue;
+      const t = await res2.json();
+      if (t.category_id === 6) return { id: t.type_id, name: t.name };
+    }
+  }
+  return null;
 }
 
 module.exports = {
-  resolveRegion,
-  resolveSystem,
-  resolveShipType,
   resolveAlliance,
   resolveCorporation,
   resolveCharacter,
+  resolveRegion,
+  resolveSystem,
+  resolveShipType,
 };
