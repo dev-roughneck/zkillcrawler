@@ -1,74 +1,83 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection, InteractionType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Create Discord client
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  partials: [Partials.Channel]
+});
 
+// Load commands dynamically from src/commands/
 client.commands = new Collection();
-
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 for (const file of commandFiles) {
   const command = require(path.join(commandsPath, file));
-  if ('data' in command && 'execute' in command) {
+  if (command.data && command.execute) {
     client.commands.set(command.data.name, command);
   }
 }
 
+// Bot ready event
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
 });
 
+// Main interaction handler
 client.on('interactionCreate', async interaction => {
-  if (interaction.isChatInputCommand()) {
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-    try {
+  try {
+    // Handle slash commands
+    if (interaction.isChatInputCommand()) {
+      const command = client.commands.get(interaction.commandName);
+      if (!command) return;
       await command.execute(interaction);
-    } catch (err) {
-      console.error(err);
+    }
+
+    // Handle modals from commands (editfeed, zkillsetup, addfeed, etc)
+    else if (interaction.isModalSubmit()) {
+      // Route to command file based on modal customId prefix
+      if (interaction.customId.startsWith('addfeed-modal')) {
+        // addfeed.js exports a handleModal
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleModal(interaction);
+      } else if (interaction.customId === 'zkill-filters') {
+        // zkillsetup.js exports a handleModal
+        const zkillsetup = require('./commands/zkillsetup');
+        await zkillsetup.handleModal(interaction);
+      } else if (interaction.customId.startsWith('editfeed-modal')) {
+        // editfeed.js exports a handleModal
+        const editfeed = require('./commands/editfeed');
+        await editfeed.handleModal(interaction);
+      }
+    }
+
+    // Handle select menus
+    else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'stopfeed-select') {
+        // stopfeed.js exports a handleSelect
+        const stopfeed = require('./commands/stopfeed');
+        await stopfeed.handleSelect(interaction);
+      }
+      // Add more select menu handlers if needed
+    }
+
+    // Add other interaction types as needed (buttons, etc)
+
+  } catch (err) {
+    console.error('Interaction error:', err);
+    try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: 'There was an error executing this command!', ephemeral: true });
+        await interaction.followUp({ content: 'There was an error while executing this interaction.', ephemeral: true });
       } else {
-        await interaction.reply({ content: 'There was an error executing this command!', ephemeral: true });
+        await interaction.reply({ content: 'There was an error while executing this interaction.', ephemeral: true });
       }
-    }
-  } else if (interaction.type === InteractionType.ModalSubmit) {
-    // Multi-step modal handling by prefix (addfeed, etc.)
-    for (const [name, command] of client.commands) {
-      if (typeof command.handleModal === 'function' && interaction.customId.startsWith(name)) {
-        try {
-          await command.handleModal(interaction);
-          break;
-        } catch (err) {
-          console.error(err);
-          if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'There was an error processing the modal!', ephemeral: true });
-          } else {
-            await interaction.reply({ content: 'There was an error processing the modal!', ephemeral: true });
-          }
-        }
-      }
-    }
-  } else if (interaction.isButton()) {
-    // Route button customIds for modal steps
-    for (const [name, command] of client.commands) {
-      if (typeof command.handleButton === 'function' && interaction.customId.startsWith(name)) {
-        try {
-          await command.handleButton(interaction);
-          break;
-        } catch (err) {
-          console.error(err);
-          if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'There was an error processing the button!', ephemeral: true });
-          } else {
-            await interaction.reply({ content: 'There was an error processing the button!', ephemeral: true });
-          }
-        }
-      }
+    } catch (err2) {
+      console.error('Error sending error reply:', err2);
     }
   }
 });
 
+// Start the bot
 client.login(process.env.DISCORD_TOKEN);
