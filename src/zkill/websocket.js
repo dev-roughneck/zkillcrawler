@@ -19,7 +19,7 @@ function startZKillWebSocket(feedName, channelId, filters, channelObj, liveWebso
 
   ws.on('open', () => {
     console.log(`[WS] Opened for ${wsKey}`);
-    ws.send(JSON.stringify({ 'action': 'sub', 'channel': 'killstream' }));
+    ws.send(JSON.stringify({ 'action': 'sub', 'channel': 'all' }));
   });
 
   ws.on('message', async data => {
