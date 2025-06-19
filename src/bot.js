@@ -35,13 +35,11 @@ client.on('interactionCreate', async interaction => {
       }
     }
   } else if (interaction.type === InteractionType.ModalSubmit) {
-    // Multi-step modal handling: match customId prefix (e.g. addfeed-modal-step1, addfeed-modal-step2, etc.)
-    let handled = false;
+    // Multi-step modal handling by prefix (addfeed, etc.)
     for (const [name, command] of client.commands) {
       if (typeof command.handleModal === 'function' && interaction.customId.startsWith(name)) {
         try {
           await command.handleModal(interaction);
-          handled = true;
           break;
         } catch (err) {
           console.error(err);
@@ -53,22 +51,19 @@ client.on('interactionCreate', async interaction => {
         }
       }
     }
-    // Backward compatibility: fallback to old single-modal IDs
-    if (!handled) {
-      const modalHandlers = {
-        'addfeed-modal': require('./commands/addfeed').handleModal,
-        'editfeed-modal': require('./commands/editfeed').handleModal,
-      };
-      const handler = modalHandlers[interaction.customId];
-      if (handler) {
+  } else if (interaction.isButton()) {
+    // Route button customIds for modal steps
+    for (const [name, command] of client.commands) {
+      if (typeof command.handleButton === 'function' && interaction.customId.startsWith(name)) {
         try {
-          await handler(interaction);
+          await command.handleButton(interaction);
+          break;
         } catch (err) {
           console.error(err);
           if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: 'There was an error processing the modal!', ephemeral: true });
+            await interaction.followUp({ content: 'There was an error processing the button!', ephemeral: true });
           } else {
-            await interaction.reply({ content: 'There was an error processing the modal!', ephemeral: true });
+            await interaction.reply({ content: 'There was an error processing the button!', ephemeral: true });
           }
         }
       }
