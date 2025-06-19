@@ -1,6 +1,14 @@
 const WebSocket = require('ws');
 const { filterKillmail } = require('./filter');
 
+/**
+ * Start a zKillboard WebSocket for a feed. Sends messages to channelObj.
+ * @param {string} feedName - Name of the feed
+ * @param {string} channelId - Discord channel ID
+ * @param {object} filters - Normalized filter object
+ * @param {object} channelObj - Discord.js channel object to send messages
+ * @param {Map} liveWebsockets - Map for tracking active websockets
+ */
 function startZKillWebSocket(feedName, channelId, filters, channelObj, liveWebsockets) {
   const wsKey = `${channelId}:${feedName}`;
   if (liveWebsockets.has(wsKey)) {
@@ -17,11 +25,26 @@ function startZKillWebSocket(feedName, channelId, filters, channelObj, liveWebso
   ws.on('message', async data => {
     try {
       const killmail = JSON.parse(data);
-      if (!filterKillmail(killmail, filters)) return;
+
+      // ADDED LOGGING: show every killmail received
+      console.log(`[ZKILL] Received killmail for feed "${feedName}" in channel ${channelId}:`);
+      console.log(JSON.stringify(killmail, null, 2));
+
+      if (!filterKillmail(killmail, filters)) {
+        // ADDED LOGGING: show when a killmail is filtered out
+        console.log(`[ZKILL] Killmail ${killmail.killmail_id} did not match filters for feed "${feedName}".`);
+        return;
+      }
+
       const link = `https://zkillboard.com/kill/${killmail.killmail_id}/`;
+
+      // ADDED LOGGING: show when a killmail is sent to Discord
+      console.log(`[ZKILL] Sending killmail ${killmail.killmail_id} to Discord channel ${channelId} for feed "${feedName}".`);
+
       await channelObj.send(`New killmail matching feed \`${feedName}\`!\n${link}`);
     } catch (e) {
-      // Ignore parse errors
+      // ADDED LOGGING: catch and show parse errors or send errors
+      console.error('[ZKILL] Error processing killmail:', e);
     }
   });
 
