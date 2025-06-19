@@ -4,8 +4,6 @@ const { startZKillWebSocket } = require('../zkill/websocket');
 const eveu = require('../eveuniverse');
 
 const liveWebsockets = new Map();
-
-// In-memory session per-user for multi-step modal flow
 const addfeedSessions = new Map();
 
 function isAdmin(member) {
