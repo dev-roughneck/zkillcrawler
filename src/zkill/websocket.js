@@ -2,7 +2,6 @@ const WebSocket = require('ws');
 const { filterKillmail } = require('./filter');
 
 function startZKillWebSocket(feedName, channelId, filters, channelObj, liveWebsockets) {
-  // Prevent duplicate sockets for the same feed
   const wsKey = `${channelId}:${feedName}`;
   if (liveWebsockets.has(wsKey)) {
     return;

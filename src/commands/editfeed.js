@@ -67,7 +67,6 @@ module.exports = {
       .setCustomId('editfeed-modal')
       .setTitle('Edit zKillboard Feed');
 
-    // All fields, matching addfeed.js, including attacker filters
     modal.addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder().setCustomId('feedname').setLabel('Feed Name to Edit').setStyle(TextInputStyle.Short).setRequired(true)
@@ -140,7 +139,6 @@ module.exports = {
     }
     stopZKillWebSocket(feedName, channelId, liveWebsockets);
 
-    // Use existing filters if not updated, else normalize new fields
     let normalizedFilters = feeds[feedName].filters;
     const anyFieldUpdated = [
       'region', 'system', 'shiptype', 'alliance', 'corp', 'character',
