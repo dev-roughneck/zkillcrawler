@@ -18,7 +18,7 @@ module.exports = {
     .setDescription('Add a new zKillboard feed to this channel, with advanced filters.'),
 
   async execute(interaction) {
-    // STEP 1: Feed name modal
+    // STEP 1: Feed Name + 4 Victim Filters
     const modal = new ModalBuilder()
       .setCustomId('addfeed-modal-step1')
       .setTitle('Add zKillboard Feed (1/3)')
@@ -29,6 +29,34 @@ module.exports = {
             .setLabel('Feed Name (unique)')
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('region')
+            .setLabel('Region(s)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('system')
+            .setLabel('System(s)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('shiptype')
+            .setLabel('Ship Type(s)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('alliance')
+            .setLabel('Victim Alliance(s)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
         )
       );
     await interaction.showModal(modal);
@@ -36,7 +64,7 @@ module.exports = {
 
   // Modal handler for all steps
   async handleModal(interaction) {
-    // STEP 1: Name
+    // STEP 1: Feed Name + 4 Victim Filters
     if (interaction.customId === 'addfeed-modal-step1') {
       const feedName = interaction.fields.getTextInputValue('feedname').trim();
       if (!feedName) {
@@ -45,41 +73,25 @@ module.exports = {
       if (feedExists(interaction.channel.id, feedName)) {
         return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
       }
-      // Prompt Next button for Step 2
-      return interaction.reply({
-        content: `Feed name set to \`${feedName}\`. Click **Next** to set victim filters.`,
-        ephemeral: true,
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`addfeed-next-step2|${feedName}`)
-              .setLabel('Next')
-              .setStyle(ButtonStyle.Primary)
-          )
-        ]
-      });
-    }
 
-    // STEP 2: Victim filters
-    if (interaction.customId.startsWith('addfeed-modal-step2|')) {
-      const feedName = interaction.customId.split('|')[1];
-      const victimFilters = {
+      // Gather first set of fields
+      const victimFiltersPart1 = {
+        feedName,
         region: interaction.fields.getTextInputValue('region').trim(),
         system: interaction.fields.getTextInputValue('system').trim(),
         shiptype: interaction.fields.getTextInputValue('shiptype').trim(),
         alliance: interaction.fields.getTextInputValue('alliance').trim(),
-        corp: interaction.fields.getTextInputValue('corp').trim(),
-        character: interaction.fields.getTextInputValue('character').trim()
       };
-      // Prompt Next button for Step 3, encode victimFilters in customId
-      const encoded = Buffer.from(JSON.stringify(victimFilters)).toString('base64');
+      const encodedPart1 = Buffer.from(JSON.stringify(victimFiltersPart1)).toString('base64');
+
+      // Prompt Next button for Step 2
       return interaction.reply({
-        content: `Victim filters set for \`${feedName}\`. Click **Next** to set attacker filters.`,
+        content: `Feed name and basic victim filters set for \`${feedName}\`. Click **Next** to set more filters.`,
         ephemeral: true,
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`addfeed-next-step3|${feedName}|${encoded}`)
+              .setCustomId(`addfeed-next-step2|${encodedPart1}`)
               .setLabel('Next')
               .setStyle(ButtonStyle.Primary)
           )
@@ -87,21 +99,54 @@ module.exports = {
       });
     }
 
-    // STEP 3: Finalize and save feed
-    if (interaction.customId.startsWith('addfeed-modal-step3|')) {
-      const [ , feedName, encodedVictimFilters ] = interaction.customId.split('|');
-      const victimFilters = JSON.parse(Buffer.from(encodedVictimFilters, 'base64').toString('utf8'));
-      // Gather all filters
-      const filters = {
-        ...victimFilters,
+    // STEP 2: Victim Corp/Char + Attacker Alliance/Corp/Char
+    if (interaction.customId.startsWith('addfeed-modal-step2|')) {
+      const [ , encodedPart1 ] = interaction.customId.split('|');
+      const victimFiltersPart1 = JSON.parse(Buffer.from(encodedPart1, 'base64').toString('utf8'));
+      const feedName = victimFiltersPart1.feedName;
+
+      // Gather next set of fields
+      const victimFiltersPart2 = {
+        corp: interaction.fields.getTextInputValue('corp').trim(),
+        character: interaction.fields.getTextInputValue('character').trim(),
         attacker_alliance: interaction.fields.getTextInputValue('attacker_alliance').trim(),
         attacker_corp: interaction.fields.getTextInputValue('attacker_corp').trim(),
         attacker_character: interaction.fields.getTextInputValue('attacker_character').trim(),
-        attacker_shiptype: interaction.fields.getTextInputValue('attacker_shiptype').trim(),
-        minisk: interaction.fields.getTextInputValue('minisk').trim(),
-        minattackers: interaction.fields.getTextInputValue('minattackers').trim(),
-        maxattackers: interaction.fields.getTextInputValue('maxattackers').trim()
       };
+
+      // Merge parts 1 and 2 for next step
+      const allFiltersPart1And2 = { ...victimFiltersPart1, ...victimFiltersPart2 };
+      const encoded1And2 = Buffer.from(JSON.stringify(allFiltersPart1And2)).toString('base64');
+
+      // Prompt Next button for Step 3
+      return interaction.reply({
+        content: `More victim and attacker filters set for \`${feedName}\`. Click **Next** to set ISK and attacker limits.`,
+        ephemeral: true,
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`addfeed-next-step3|${encoded1And2}`)
+              .setLabel('Next')
+              .setStyle(ButtonStyle.Primary)
+          )
+        ]
+      });
+    }
+
+    // STEP 3: ISK/attacker limits, finalize and save feed
+    if (interaction.customId.startsWith('addfeed-modal-step3|')) {
+      const [ , encoded1And2 ] = interaction.customId.split('|');
+      const filters = JSON.parse(Buffer.from(encoded1And2, 'base64').toString('utf8'));
+      const feedName = filters.feedName;
+
+      // Gather last fields
+      filters.min_isk = interaction.fields.getTextInputValue('min_isk').trim();
+      filters.max_isk = interaction.fields.getTextInputValue('max_isk').trim();
+      filters.min_attackers = interaction.fields.getTextInputValue('min_attackers').trim();
+      filters.max_attackers = interaction.fields.getTextInputValue('max_attackers').trim();
+
+      // Remove feedName from filters to avoid redundancy in DB
+      delete filters.feedName;
 
       // Save feed config (wrap in { filters } for DB)
       setFeed(interaction.channel.id, feedName, { filters });
@@ -116,52 +161,45 @@ module.exports = {
 
   // Button handler for stepping between modals
   async handleButton(interaction) {
-    // Step 2: Victim filters modal
+    // Step 2: Corp/Char/Attacker modal
     if (interaction.customId.startsWith('addfeed-next-step2|')) {
-      const feedName = interaction.customId.split('|')[1];
+      const [ , encodedPart1 ] = interaction.customId.split('|');
       const modal = new ModalBuilder()
-        .setCustomId(`addfeed-modal-step2|${feedName}`)
+        .setCustomId(`addfeed-modal-step2|${encodedPart1}`)
         .setTitle('Add zKillboard Feed (2/3)')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('region')
-              .setLabel('Region Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('system')
-              .setLabel('System Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('shiptype')
-              .setLabel('Victim Ship Type(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('alliance')
-              .setLabel('Victim Alliance Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
               .setCustomId('corp')
-              .setLabel('Victim Corp Name(s), comma separated')
+              .setLabel('Victim Corp(s)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('character')
-              .setLabel('Victim Character Name(s), comma separated')
+              .setLabel('Victim Character(s)')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('attacker_alliance')
+              .setLabel('Attacker Alliance(s)')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('attacker_corp')
+              .setLabel('Attacker Corp(s)')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('attacker_character')
+              .setLabel('Attacker Character(s)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           )
@@ -169,58 +207,37 @@ module.exports = {
       return interaction.showModal(modal);
     }
 
-    // Step 3: Attacker filters modal
+    // Step 3: ISK/attacker limits modal
     if (interaction.customId.startsWith('addfeed-next-step3|')) {
-      const [ , feedName, encodedVictimFilters ] = interaction.customId.split('|');
+      const [ , encoded1And2 ] = interaction.customId.split('|');
       const modal = new ModalBuilder()
-        .setCustomId(`addfeed-modal-step3|${feedName}|${encodedVictimFilters}`)
+        .setCustomId(`addfeed-modal-step3|${encoded1And2}`)
         .setTitle('Add zKillboard Feed (3/3)')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('attacker_alliance')
-              .setLabel('Attacker Alliance Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('attacker_corp')
-              .setLabel('Attacker Corp Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('attacker_character')
-              .setLabel('Attacker Character Name(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('attacker_shiptype')
-              .setLabel('Attacker Ship Type(s), comma separated')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('minisk')
+              .setCustomId('min_isk')
               .setLabel('Minimum ISK Value')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('minattackers')
+              .setCustomId('max_isk')
+              .setLabel('Maximum ISK Value')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('min_attackers')
               .setLabel('Minimum Attackers')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('maxattackers')
+              .setCustomId('max_attackers')
               .setLabel('Maximum Attackers')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
