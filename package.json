@@ -4,6 +4,9 @@
   "main": "src/bot.js",
   "type": "commonjs",
   "license": "MIT",
+  "scripts": {
+    "start": "node src/bot.js"
+  },
   "dependencies": {
     "discord.js": "^14.0.0",
     "sqlite3": "^5.1.0"
