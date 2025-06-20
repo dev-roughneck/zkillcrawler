@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
+const { formatKillmailEmbed } = require('./embeds'); // <-- Use your enhanced embed function
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -25,7 +26,7 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
   listenToRedisQ('miseryengine', async (killmail) => {
-    console.log('[BOT] Handling killmail:', killmail.killID);
+    console.log('[BOT] Handling killmail:', killmail.killID || killmail.killmail_id);
     // Get all feeds (channelId, feedName, filters)
     const feeds = getAllFeeds();
     for (const { channelId, feedName, filters } of feeds) {
@@ -33,9 +34,9 @@ client.once('ready', () => {
         if (applyFilters(killmail, filters)) {
           const channel = await client.channels.fetch(channelId).catch(() => null);
           if (channel) {
-            await channel.send({
-              content: `New killmail for feed \`${feedName}\`: https://zkillboard.com/kill/${killmail.killID}/`
-            });
+            // Use the embed!
+            const embed = await formatKillmailEmbed(killmail, feedName);
+            await channel.send({ embeds: [embed] });
           }
         }
       } catch (err) {
