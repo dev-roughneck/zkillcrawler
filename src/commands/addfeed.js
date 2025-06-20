@@ -79,7 +79,8 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('alliances')
-              .setLabel('Victim Alliance(s) (name or ID, comma-separated)')
+              // SHORTENED LABEL TO 45 CHARACTERS
+              .setLabel('Victim Alliance(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
