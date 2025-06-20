@@ -1,276 +1,227 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-const { listenToRedisQ } = require('./zkill/redisq');
-const { getAllFeeds } = require('./feeds');
-const {
-  resolveCharacter,
-  resolveCorporation,
-  resolveAlliance,
-  resolveShipType,
-  resolveSystem,
-} = require('./eveuniverse');
+// EVE Universe Entity Resolver using batch POST endpoints for best practice
 
-// Catch unhandled promise rejections for extra robustness
-process.on('unhandledRejection', (reason, p) => {
-  console.error('Unhandled Rejection at:', p, 'reason:', reason);
-});
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-  partials: [Partials.Channel]
-});
-
-// Load commands dynamically from src/commands/
-client.commands = new Collection();
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-for (const file of commandFiles) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data && command.execute) {
-    client.commands.set(command.data.name, command);
-  }
+let fetchFn;
+try {
+  fetchFn = fetch; // Node 18+ has global fetch
+} catch (e) {
+  fetchFn = require('node-fetch');
 }
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}!`);
-  listenToRedisQ(async (killmail) => {
-    try {
-      console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
-      // Step 1: Name resolution
-      console.log("Resolving victim/system/ship/corp/alliance names...");
-      const victim = killmail.killmail?.victim || {};
-      const systemId = killmail.killmail?.solar_system_id;
-      const shipTypeId = victim.ship_type_id;
-      const corpId = victim.corporation_id;
-      const allianceId = victim.alliance_id;
-      const charId = victim.character_id;
+const ESI_BASE = 'https://esi.evetech.net/latest';
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-      let victimChar, victimCorp, victimAlliance, victimShip, system;
-      try {
-        [victimChar, victimCorp, victimAlliance, victimShip, system] = await Promise.all([
-          charId ? resolveCharacter(charId) : null,
-          corpId ? resolveCorporation(corpId) : null,
-          allianceId ? resolveAlliance(allianceId) : null,
-          shipTypeId ? resolveShipType(shipTypeId) : null,
-          systemId ? resolveSystem(systemId) : null,
-        ]);
-        console.log("Name resolution complete.");
-      } catch (err) {
-        console.error("ERROR during name resolution:", err);
-        return; // Can't continue if this fails
-      }
+// Simple in-memory cache { key: { value, expire } }
+const cache = {};
 
-      // Step 2: Enrich killmail for filters/output
-      const killmailWithNames = {
-        ...killmail,
-        victim: {
-          ...victim,
-          character: victimChar?.name,
-          corporation: victimCorp?.name,
-          alliance: victimAlliance?.name,
-          ship_type: victimShip?.name,
-        },
-        solar_system: system ? { name: system.name } : {},
-      };
+function cacheKey(type, idOrName) {
+  return `${type}:${idOrName}`.toLowerCase();
+}
+function setCache(type, idOrName, value) {
+  cache[cacheKey(type, idOrName)] = { value, expire: Date.now() + CACHE_TTL };
+}
+function getCache(type, idOrName) {
+  const entry = cache[cacheKey(type, idOrName)];
+  if (entry && entry.expire > Date.now()) return entry.value;
+  return null;
+}
 
-      // Step 3: Optionally resolve attacker info if needed for filters
-      const feeds = getAllFeeds();
-      console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
-      const needsAttackerNames = feeds.some(feed => {
-        const f = feed.filters || {};
-        return f.attacker_alliance || f.attacker_corp || f.attacker_character;
-      });
-      if (needsAttackerNames) {
-        console.log("Resolving attacker names...");
-        const attackersWithNames = await Promise.all(
-          (killmail.killmail?.attackers || []).map(async atk => {
-            const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
-            const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
-            const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
-            return {
-              ...atk,
-              character: char?.name,
-              corporation: corp?.name,
-              alliance: alliance?.name,
-            };
-          })
-        );
-        killmailWithNames.attackers = attackersWithNames;
-        console.log("Attacker name resolution complete.");
-      } else {
-        killmailWithNames.attackers = killmail.killmail?.attackers || [];
-      }
+// --- Batch ESI helpers ---
 
-      // Step 4: For each feed, check filters and post
-      for (const { channel_id, feed_name, filters } of feeds) {
-        try {
-          const passes = await applyFilters(killmailWithNames, filters);
-          console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
-          if (passes) {
-            const channel = await client.channels.fetch(channel_id).catch((err) => {
-              console.error(`Could not fetch channel ${channel_id}:`, err);
-              return null;
-            });
-            if (channel) {
-              console.log(`Posting killmail to channel ${channel_id}`);
-              const embed = new EmbedBuilder()
-                .setTitle(`Killmail: ${killmail.killID}`)
-                .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
-                .setDescription(`New killmail for feed \`${feed_name}\``)
-                .setColor(0xff0000)
-                .addFields(
-                  { name: 'Victim', value: victimChar?.name || 'Unknown', inline: true },
-                  { name: 'Corporation', value: victimCorp?.name || 'Unknown', inline: true },
-                  { name: 'Alliance', value: victimAlliance?.name || 'Unknown', inline: true },
-                  { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
-                  { name: 'System', value: system?.name || 'Unknown', inline: true },
-                  { name: 'ISK Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
-                );
-              await channel.send({ embeds: [embed] });
-              console.log("Posted embed to Discord.");
-            } else {
-              console.error(`Channel ${channel_id} not found or bot has no access.`);
-            }
-          }
-        } catch (err) {
-          console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
-        }
-      }
-      // Optionally, log when done with this kill
-      console.log("Finished processing killmail:", killmail.killID);
-    } catch (err) {
-      console.error("Error in killmail handler:", err);
-    }
+// Batch resolve IDs to names (returns array of {category, id, name})
+async function idsToNames(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const url = `${ESI_BASE}/universe/names/`;
+  const data = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ids.map(Number)),
   });
-});
-
-client.on('interactionCreate', async interaction => {
-  try {
-    if (interaction.isChatInputCommand()) {
-      const command = client.commands.get(interaction.commandName);
-      if (command) await command.execute(interaction);
-    }
-    else if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('addfeed-modal')) {
-        const addfeed = require('./commands/addfeed');
-        await addfeed.handleModal(interaction);
-      } else if (interaction.customId === 'zkill-filters') {
-        const zkillsetup = require('./commands/zkillsetup');
-        await zkillsetup.handleModal(interaction);
-      } else if (interaction.customId.startsWith('editfeed-modal')) {
-        const editfeed = require('./commands/editfeed');
-        await editfeed.handleModal(interaction);
-      }
-    }
-    else if (interaction.isButton()) {
-      if (interaction.customId.startsWith('addfeed-next-step')) {
-        const addfeed = require('./commands/addfeed');
-        await addfeed.handleButton(interaction);
-      }
-    }
-    else if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'stopfeed-select') {
-        const stopfeed = require('./commands/stopfeed');
-        await stopfeed.handleSelect(interaction);
-      }
-    }
-  } catch (err) {
-    console.error('Interaction error:', err);
-    try {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
-      } else {
-        await interaction.reply({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
-      }
-    } catch (err2) {
-      console.error('Error sending error reply:', err2);
-    }
-  }
-});
-
-client.login(process.env.DISCORD_TOKEN);
-
-// --- Helper: filter logic ---
-async function applyFilters(killmail, filters) {
-  if (!filters || Object.keys(filters).length === 0) return true;
-  function toArray(str) {
-    if (!str) return [];
-    return str.split(',').map(s => s.trim()).filter(Boolean);
-  }
-  if (filters.region) {
-    const allowedRegions = toArray(filters.region).map(x => x.toLowerCase());
-    if (!allowedRegions.includes((killmail.solar_system?.region?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.system) {
-    const allowedSystems = toArray(filters.system).map(x => x.toLowerCase());
-    if (!allowedSystems.includes((killmail.solar_system?.name?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.shiptype) {
-    const allowedShips = toArray(filters.shiptype).map(x => x.toLowerCase());
-    if (!allowedShips.includes((killmail.victim?.ship_type?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.alliance) {
-    const allowedAlliances = toArray(filters.alliance).map(x => x.toLowerCase());
-    if (!allowedAlliances.includes((killmail.victim?.alliance?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.corp) {
-    const allowedCorps = toArray(filters.corp).map(x => x.toLowerCase());
-    if (!allowedCorps.includes((killmail.victim?.corporation?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.character) {
-    const allowedChars = toArray(filters.character).map(x => x.toLowerCase());
-    if (!allowedChars.includes((killmail.victim?.character?.toLowerCase()) || '')) {
-      return false;
-    }
-  }
-  if (filters.attacker_alliance) {
-    const allowedAA = toArray(filters.attacker_alliance).map(x => x.toLowerCase());
-    const attackersMatch = (killmail.attackers || []).some(a =>
-      a.alliance && allowedAA.includes(a.alliance.toLowerCase())
-    );
-    if (!attackersMatch) return false;
-  }
-  if (filters.attacker_corp) {
-    const allowedAC = toArray(filters.attacker_corp).map(x => x.toLowerCase());
-    const attackersMatch = (killmail.attackers || []).some(a =>
-      a.corporation && allowedAC.includes(a.corporation.toLowerCase())
-    );
-    if (!attackersMatch) return false;
-  }
-  if (filters.attacker_character) {
-    const allowedAChar = toArray(filters.attacker_character).map(x => x.toLowerCase());
-    const attackersMatch = (killmail.attackers || []).some(a =>
-      a.character && allowedAChar.includes(a.character.toLowerCase())
-    );
-    if (!attackersMatch) return false;
-  }
-  if (filters.min_isk) {
-    const minVal = parseFloat(filters.min_isk.replace(/,/g, ''));
-    if (!isNaN(minVal) && (killmail.zkb?.totalValue || 0) < minVal) return false;
-  }
-  if (filters.max_isk) {
-    const maxVal = parseFloat(filters.max_isk.replace(/,/g, ''));
-    if (!isNaN(maxVal) && (killmail.zkb?.totalValue || 0) > maxVal) return false;
-  }
-  if (filters.min_attackers) {
-    const minAtk = parseInt(filters.min_attackers);
-    if (!isNaN(minAtk) && (killmail.attackers?.length || 0) < minAtk) return false;
-  }
-  if (filters.max_attackers) {
-    const maxAtk = parseInt(filters.max_attackers);
-    if (!isNaN(maxAtk) && (killmail.attackers?.length || 0) > maxAtk) return false;
-  }
-  return true;
+  return Array.isArray(data) ? data : [];
 }
+
+// Batch resolve names to IDs (returns object: { characters: [], corporations: [], ... })
+async function namesToIds(names) {
+  if (!Array.isArray(names) || names.length === 0) return {};
+  const url = `${ESI_BASE}/universe/ids/`;
+  const data = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(names),
+  });
+  return typeof data === "object" && data !== null ? data : {};
+}
+
+// General fetch with retries and error logging
+async function fetchWithRetry(url, options = {}, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetchFn(url, options);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return await res.json();
+    } catch (e) {
+      if (attempt < retries) {
+        const delay = 500 + Math.random() * 500;
+        console.warn(`[EVEU] Retry ${attempt + 1} for ${url}: ${e.message}`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } else {
+        console.error(`[EVEU] Failed after ${retries + 1} attempts: ${url}`, e);
+        return null;
+      }
+    }
+  }
+}
+
+// --- Resolvers: ID to Name ---
+
+async function resolveById(id, category) {
+  if (!id || !category) return null;
+  const ckey = cacheKey(category, id);
+  const cached = getCache(category, id);
+  if (cached) return cached;
+  const results = await idsToNames([id]);
+  const entity = results.find(e => e.category === category && e.id == id);
+  if (entity) {
+    setCache(category, id, { id: entity.id, name: entity.name });
+    return { id: entity.id, name: entity.name };
+  }
+  return null;
+}
+
+// --- Resolvers: Name to ID ---
+
+async function resolveByName(name, category) {
+  if (!name || !category) return null;
+  const ckey = cacheKey(category, name.toLowerCase());
+  const cached = getCache(category, name.toLowerCase());
+  if (cached) return cached;
+  const ids = await namesToIds([name]);
+  if (ids && ids[category + 's'] && ids[category + 's'].length > 0) {
+    const entity = ids[category + 's'][0];
+    setCache(category, name.toLowerCase(), { id: entity.id, name: entity.name });
+    return { id: entity.id, name: entity.name };
+  }
+  // Fallback to /search for fuzzy
+  const url = `${ESI_BASE}/search/?categories=${category}&search=${encodeURIComponent(name)}&strict=false`;
+  const data = await fetchWithRetry(url);
+  if (data && data[category] && data[category].length > 0) {
+    const id = data[category][0];
+    return await resolveById(id, category);
+  }
+  return null;
+}
+
+// --- Entity-specific functions ---
+
+async function resolveAlliance(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return await resolveById(input, 'alliance');
+  return await resolveByName(input, 'alliance');
+}
+async function resolveCorporation(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return await resolveById(input, 'corporation');
+  return await resolveByName(input, 'corporation');
+}
+async function resolveCharacter(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return await resolveById(input, 'character');
+  return await resolveByName(input, 'character');
+}
+async function resolveRegion(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return await resolveById(input, 'region');
+  return await resolveByName(input, 'region');
+}
+async function resolveSystem(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) return await resolveById(input, 'solar_system');
+  return await resolveByName(input, 'solar_system');
+}
+async function resolveShipType(input) {
+  if (!input) return null;
+  if (/^\d+$/.test(input)) {
+    // /universe/types/{type_id}/ to check for category_id === 6 (ship)
+    const ckey = cacheKey('shiptype', input);
+    const cached = getCache('shiptype', input);
+    if (cached) return cached;
+    const url = `${ESI_BASE}/universe/types/${input}/`;
+    const data = await fetchWithRetry(url);
+    if (data && data.category_id === 6) {
+      const result = { id: data.type_id, name: data.name };
+      setCache('shiptype', input, result);
+      return result;
+    }
+    return null;
+  }
+  // For name, use inventory_type
+  const ckey = cacheKey('shiptype', input.toLowerCase());
+  const cached = getCache('shiptype', input.toLowerCase());
+  if (cached) return cached;
+  // Try with namesToIds first
+  const ids = await namesToIds([input]);
+  if (ids && ids.inventory_types && ids.inventory_types.length > 0) {
+    for (const typeObj of ids.inventory_types) {
+      // For each inventory_type, check /universe/types/{id}/ for category_id === 6
+      const t = await fetchWithRetry(`${ESI_BASE}/universe/types/${typeObj.id}/`);
+      if (t && t.category_id === 6) {
+        const result = { id: t.type_id, name: t.name };
+        setCache('shiptype', input.toLowerCase(), result);
+        return result;
+      }
+    }
+  }
+  // Fallback to /search for fuzzy
+  const url = `${ESI_BASE}/search/?categories=inventory_type&search=${encodeURIComponent(input)}&strict=false`;
+  const data = await fetchWithRetry(url);
+  if (data && data.inventory_type && data.inventory_type.length > 0) {
+    for (const typeId of data.inventory_type) {
+      const t = await fetchWithRetry(`${ESI_BASE}/universe/types/${typeId}/`);
+      if (t && t.category_id === 6) {
+        const result = { id: t.type_id, name: t.name };
+        setCache('shiptype', input.toLowerCase(), result);
+        return result;
+      }
+    }
+  }
+  return null;
+}
+
+// --- Bulk resolve helpers ---
+async function resolveIds(input, type) {
+  if (!input) return [];
+  const entries = input.split(',').map(s => s.trim()).filter(Boolean);
+  const ids = [];
+  for (const entry of entries) {
+    let obj = null;
+    switch (type) {
+      case 'corporation':
+        obj = await resolveCorporation(entry); break;
+      case 'character':
+        obj = await resolveCharacter(entry); break;
+      case 'alliance':
+        obj = await resolveAlliance(entry); break;
+      case 'region':
+        obj = await resolveRegion(entry); break;
+      case 'system':
+        obj = await resolveSystem(entry); break;
+      case 'shiptype':
+        obj = await resolveShipType(entry); break;
+      default:
+        obj = null;
+    }
+    if (obj && obj.id) ids.push(obj.id);
+  }
+  return ids;
+}
+
+module.exports = {
+  resolveAlliance,
+  resolveCorporation,
+  resolveCharacter,
+  resolveRegion,
+  resolveSystem,
+  resolveShipType,
+  resolveIds,
+  idsToNames,
+  namesToIds,
+};
