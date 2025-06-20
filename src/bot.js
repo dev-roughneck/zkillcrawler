@@ -99,7 +99,39 @@ client.login(process.env.DISCORD_TOKEN);
 
 // --- Helper: filter logic ---
 function applyFilters(killmail, filters) {
-  // Implement your filter logic here.
-  // For demo, always return true. Replace with your own field checks!
+  // If no filters, allow everything
+  if (!filters || Object.keys(filters).length === 0) return true;
+
+  // Corporation filter
+  if (filters.corporationIds && filters.corporationIds.length > 0) {
+    const involvedCorpIds = [
+      killmail.victim?.corporation_id,
+      ...(killmail.attackers?.map(a => a.corporation_id) ?? [])
+    ].filter(Boolean);
+    if (!involvedCorpIds.some(id => filters.corporationIds.includes(id))) return false;
+  }
+
+  // Character filter
+  if (filters.characterIds && filters.characterIds.length > 0) {
+    const involvedCharIds = [
+      killmail.victim?.character_id,
+      ...(killmail.attackers?.map(a => a.character_id) ?? [])
+    ].filter(Boolean);
+    if (!involvedCharIds.some(id => filters.characterIds.includes(id))) return false;
+  }
+
+  // Minimum ISK value filter
+  if (filters.minValue && killmail.zkb?.totalValue) {
+    if (killmail.zkb.totalValue < filters.minValue) return false;
+  }
+
+  // Region filter (assuming killmail contains region_name)
+  if (filters.regions && filters.regions.length > 0) {
+    if (!filters.regions.includes(killmail.region_name)) return false;
+  }
+
+  // Add more filter types as needed...
+
+  // If all filters passed
   return true;
 }
