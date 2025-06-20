@@ -33,92 +33,96 @@ client.once('ready', () => {
   // Start single RedisQ poller for all feeds
   let firstKillmailLogged = false;
   listenToRedisQ(async (killmail) => {
-    if (!firstKillmailLogged) {
-      console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
-      firstKillmailLogged = true;
-    }
-
-    // --- Name resolution for victim, ship, system, corp, alliance ---
-    const victim = killmail.killmail?.victim || {};
-    const systemId = killmail.killmail?.solar_system_id;
-    const shipTypeId = victim.ship_type_id;
-    const corpId = victim.corporation_id;
-    const allianceId = victim.alliance_id;
-    const charId = victim.character_id;
-
-    // These may be undefined (especially alliance)
-    const [victimChar, victimCorp, victimAlliance, victimShip, system] = await Promise.all([
-      charId ? resolveCharacter(charId) : null,
-      corpId ? resolveCorporation(corpId) : null,
-      allianceId ? resolveAlliance(allianceId) : null,
-      shipTypeId ? resolveShipType(shipTypeId) : null,
-      systemId ? resolveSystem(systemId) : null,
-    ]);
-
-    // Enrich for filters and output
-    const killmailWithNames = {
-      ...killmail,
-      victim: {
-        ...victim,
-        character: victimChar?.name,
-        corporation: victimCorp?.name,
-        alliance: victimAlliance?.name,
-        ship_type: victimShip?.name,
-      },
-      solar_system: system ? { name: system.name } : {},
-      // attackers: to be filled below if needed
-    };
-
-    // Optionally resolve attacker info if filters use attacker names
-    let attackersWithNames = [];
-    const needsAttackerNames = (feeds) => feeds.some(feed => {
-      const f = feed.filters || {};
-      return f.attacker_alliance || f.attacker_corp || f.attacker_character;
-    });
-    const feeds = getAllFeeds();
-    if (needsAttackerNames(feeds)) {
-      attackersWithNames = await Promise.all(
-        (killmail.killmail?.attackers || []).map(async atk => {
-          const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
-          const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
-          const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
-          return {
-            ...atk,
-            character: char?.name,
-            corporation: corp?.name,
-            alliance: alliance?.name,
-          };
-        })
-      );
-      killmailWithNames.attackers = attackersWithNames;
-    } else {
-      killmailWithNames.attackers = killmail.killmail?.attackers || [];
-    }
-
-    for (const { channel_id, feed_name, filters } of feeds) {
-      try {
-        if (await applyFilters(killmailWithNames, filters)) {
-          const channel = await client.channels.fetch(channel_id).catch(() => null);
-          if (channel) {
-            const embed = new EmbedBuilder()
-              .setTitle(`Killmail: ${killmail.killID}`)
-              .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
-              .setDescription(`New killmail for feed \`${feed_name}\``)
-              .setColor(0xff0000)
-              .addFields(
-                { name: 'Victim', value: victimChar?.name || 'Unknown', inline: true },
-                { name: 'Corporation', value: victimCorp?.name || 'Unknown', inline: true },
-                { name: 'Alliance', value: victimAlliance?.name || 'Unknown', inline: true },
-                { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
-                { name: 'System', value: system?.name || 'Unknown', inline: true },
-                { name: 'ISK Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
-              );
-            await channel.send({ embeds: [embed] });
-          }
-        }
-      } catch (err) {
-        console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
+    try {
+      if (!firstKillmailLogged) {
+        console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
+        firstKillmailLogged = true;
       }
+
+      // --- Name resolution for victim, ship, system, corp, alliance ---
+      const victim = killmail.killmail?.victim || {};
+      const systemId = killmail.killmail?.solar_system_id;
+      const shipTypeId = victim.ship_type_id;
+      const corpId = victim.corporation_id;
+      const allianceId = victim.alliance_id;
+      const charId = victim.character_id;
+
+      // These may be undefined (especially alliance)
+      const [victimChar, victimCorp, victimAlliance, victimShip, system] = await Promise.all([
+        charId ? resolveCharacter(charId) : null,
+        corpId ? resolveCorporation(corpId) : null,
+        allianceId ? resolveAlliance(allianceId) : null,
+        shipTypeId ? resolveShipType(shipTypeId) : null,
+        systemId ? resolveSystem(systemId) : null,
+      ]);
+
+      // Enrich for filters and output
+      const killmailWithNames = {
+        ...killmail,
+        victim: {
+          ...victim,
+          character: victimChar?.name,
+          corporation: victimCorp?.name,
+          alliance: victimAlliance?.name,
+          ship_type: victimShip?.name,
+        },
+        solar_system: system ? { name: system.name } : {},
+        // attackers: to be filled below if needed
+      };
+
+      // Optionally resolve attacker info if filters use attacker names
+      let attackersWithNames = [];
+      const feeds = getAllFeeds();
+      const needsAttackerNames = feeds.some(feed => {
+        const f = feed.filters || {};
+        return f.attacker_alliance || f.attacker_corp || f.attacker_character;
+      });
+      if (needsAttackerNames) {
+        attackersWithNames = await Promise.all(
+          (killmail.killmail?.attackers || []).map(async atk => {
+            const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
+            const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
+            const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
+            return {
+              ...atk,
+              character: char?.name,
+              corporation: corp?.name,
+              alliance: alliance?.name,
+            };
+          })
+        );
+        killmailWithNames.attackers = attackersWithNames;
+      } else {
+        killmailWithNames.attackers = killmail.killmail?.attackers || [];
+      }
+
+      for (const { channel_id, feed_name, filters } of feeds) {
+        try {
+          if (await applyFilters(killmailWithNames, filters)) {
+            const channel = await client.channels.fetch(channel_id).catch(() => null);
+            if (channel) {
+              const embed = new EmbedBuilder()
+                .setTitle(`Killmail: ${killmail.killID}`)
+                .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
+                .setDescription(`New killmail for feed \`${feed_name}\``)
+                .setColor(0xff0000)
+                .addFields(
+                  { name: 'Victim', value: victimChar?.name || 'Unknown', inline: true },
+                  { name: 'Corporation', value: victimCorp?.name || 'Unknown', inline: true },
+                  { name: 'Alliance', value: victimAlliance?.name || 'Unknown', inline: true },
+                  { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
+                  { name: 'System', value: system?.name || 'Unknown', inline: true },
+                  { name: 'ISK Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
+                );
+              await channel.send({ embeds: [embed] });
+            }
+          }
+        } catch (err) {
+          console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("Error in killmail handler:", err);
     }
   });
 });
