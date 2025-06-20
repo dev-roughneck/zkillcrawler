@@ -10,6 +10,8 @@ const {
 const { getFeeds, setFeed, feedExists } = require('../feeds');
 const { startRedisQPolling, stopRedisQPolling } = require('../zkill/redisq');
 
+// In-memory cache for multi-step modal data
+const addfeedCache = new Map();
 const livePolls = new Map();
 
 module.exports = {
@@ -68,30 +70,31 @@ module.exports = {
     if (interaction.customId === 'addfeed-modal-step1') {
       const feedName = interaction.fields.getTextInputValue('feedname').trim();
       if (!feedName) {
-        return interaction.reply({ content: 'Feed name is required.', ephemeral: true });
+        return interaction.reply({ content: 'Feed name is required.', flags: 1 << 6 });
       }
       if (feedExists(interaction.channel.id, feedName)) {
-        return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
+        return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, flags: 1 << 6 });
       }
 
-      // Gather first set of fields
-      const victimFiltersPart1 = {
+      // Gather first set of fields and cache by a short key
+      const step1 = {
         feedName,
         region: interaction.fields.getTextInputValue('region').trim(),
         system: interaction.fields.getTextInputValue('system').trim(),
         shiptype: interaction.fields.getTextInputValue('shiptype').trim(),
-        alliance: interaction.fields.getTextInputValue('alliance').trim(),
+        alliance: interaction.fields.getTextInputValue('alliance').trim()
       };
-      const encodedPart1 = Buffer.from(JSON.stringify(victimFiltersPart1)).toString('base64');
+      const cacheKey = `${interaction.user.id}-${Date.now()}`;
+      addfeedCache.set(cacheKey, { step1 });
 
       // Prompt Next button for Step 2
       return interaction.reply({
         content: `Feed name and basic victim filters set for \`${feedName}\`. Click **Next** to set more filters.`,
-        ephemeral: true,
+        flags: 1 << 6,
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`addfeed-next-step2|${encodedPart1}`)
+              .setCustomId(`addfeed-next-step2|${cacheKey}`)
               .setLabel('Next')
               .setStyle(ButtonStyle.Primary)
           )
@@ -101,31 +104,31 @@ module.exports = {
 
     // STEP 2: Victim Corp/Char + Attacker Alliance/Corp/Char
     if (interaction.customId.startsWith('addfeed-modal-step2|')) {
-      const [ , encodedPart1 ] = interaction.customId.split('|');
-      const victimFiltersPart1 = JSON.parse(Buffer.from(encodedPart1, 'base64').toString('utf8'));
-      const feedName = victimFiltersPart1.feedName;
+      const [ , cacheKey ] = interaction.customId.split('|');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache || !cache.step1) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
+      const feedName = cache.step1.feedName;
 
       // Gather next set of fields
-      const victimFiltersPart2 = {
+      const step2 = {
         corp: interaction.fields.getTextInputValue('corp').trim(),
         character: interaction.fields.getTextInputValue('character').trim(),
         attacker_alliance: interaction.fields.getTextInputValue('attacker_alliance').trim(),
         attacker_corp: interaction.fields.getTextInputValue('attacker_corp').trim(),
-        attacker_character: interaction.fields.getTextInputValue('attacker_character').trim(),
+        attacker_character: interaction.fields.getTextInputValue('attacker_character').trim()
       };
-
-      // Merge parts 1 and 2 for next step
-      const allFiltersPart1And2 = { ...victimFiltersPart1, ...victimFiltersPart2 };
-      const encoded1And2 = Buffer.from(JSON.stringify(allFiltersPart1And2)).toString('base64');
+      addfeedCache.set(cacheKey, { ...cache, step2 });
 
       // Prompt Next button for Step 3
       return interaction.reply({
         content: `More victim and attacker filters set for \`${feedName}\`. Click **Next** to set ISK and attacker limits.`,
-        ephemeral: true,
+        flags: 1 << 6,
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`addfeed-next-step3|${encoded1And2}`)
+              .setCustomId(`addfeed-next-step3|${cacheKey}`)
               .setLabel('Next')
               .setStyle(ButtonStyle.Primary)
           )
@@ -135,18 +138,24 @@ module.exports = {
 
     // STEP 3: ISK/attacker limits, finalize and save feed
     if (interaction.customId.startsWith('addfeed-modal-step3|')) {
-      const [ , encoded1And2 ] = interaction.customId.split('|');
-      const filters = JSON.parse(Buffer.from(encoded1And2, 'base64').toString('utf8'));
-      const feedName = filters.feedName;
+      const [ , cacheKey ] = interaction.customId.split('|');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache || !cache.step1 || !cache.step2) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
+      const feedName = cache.step1.feedName;
 
       // Gather last fields
-      filters.min_isk = interaction.fields.getTextInputValue('min_isk').trim();
-      filters.max_isk = interaction.fields.getTextInputValue('max_isk').trim();
-      filters.min_attackers = interaction.fields.getTextInputValue('min_attackers').trim();
-      filters.max_attackers = interaction.fields.getTextInputValue('max_attackers').trim();
+      const step3 = {
+        min_isk: interaction.fields.getTextInputValue('min_isk').trim(),
+        max_isk: interaction.fields.getTextInputValue('max_isk').trim(),
+        min_attackers: interaction.fields.getTextInputValue('min_attackers').trim(),
+        max_attackers: interaction.fields.getTextInputValue('max_attackers').trim()
+      };
 
-      // Remove feedName from filters to avoid redundancy in DB
-      delete filters.feedName;
+      // Merge all steps
+      const filters = { ...cache.step1, ...cache.step2, ...step3 };
+      delete filters.feedName; // Don't store feedName in filters
 
       // Save feed config (wrap in { filters } for DB)
       setFeed(interaction.channel.id, feedName, { filters });
@@ -155,7 +164,10 @@ module.exports = {
       stopRedisQPolling(feedName, interaction.channel.id, livePolls);
       startRedisQPolling(feedName, interaction.channel.id, filters, interaction.channel, `${interaction.channel.id}-${feedName}`, livePolls);
 
-      return interaction.reply({ content: `Feed \`${feedName}\` created and polling started!`, ephemeral: true });
+      // Clean up cache
+      addfeedCache.delete(cacheKey);
+
+      return interaction.reply({ content: `Feed \`${feedName}\` created and polling started!`, flags: 1 << 6 });
     }
   },
 
@@ -163,9 +175,13 @@ module.exports = {
   async handleButton(interaction) {
     // Step 2: Corp/Char/Attacker modal
     if (interaction.customId.startsWith('addfeed-next-step2|')) {
-      const [ , encodedPart1 ] = interaction.customId.split('|');
+      const [ , cacheKey ] = interaction.customId.split('|');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache || !cache.step1) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
       const modal = new ModalBuilder()
-        .setCustomId(`addfeed-modal-step2|${encodedPart1}`)
+        .setCustomId(`addfeed-modal-step2|${cacheKey}`)
         .setTitle('Add zKillboard Feed (2/3)')
         .addComponents(
           new ActionRowBuilder().addComponents(
@@ -209,9 +225,13 @@ module.exports = {
 
     // Step 3: ISK/attacker limits modal
     if (interaction.customId.startsWith('addfeed-next-step3|')) {
-      const [ , encoded1And2 ] = interaction.customId.split('|');
+      const [ , cacheKey ] = interaction.customId.split('|');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache || !cache.step1 || !cache.step2) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
       const modal = new ModalBuilder()
-        .setCustomId(`addfeed-modal-step3|${encoded1And2}`)
+        .setCustomId(`addfeed-modal-step3|${cacheKey}`)
         .setTitle('Add zKillboard Feed (3/3)')
         .addComponents(
           new ActionRowBuilder().addComponents(
