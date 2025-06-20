@@ -162,7 +162,7 @@ module.exports = {
 
       // Start polling (stop previous if exists)
       stopRedisQPolling(feedName, interaction.channel.id, livePolls);
-      startRedisQPolling(feedName, interaction.channel.id, filters, interaction.channel, `${interaction.channel.id}-${feedName}`, livePolls);
+      startRedisQPolling(feedName, interaction.channel.id, filters, interaction.channel, "miseryengine", livePolls);
 
       // Clean up cache
       addfeedCache.delete(cacheKey);
