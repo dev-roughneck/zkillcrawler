@@ -71,7 +71,8 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('characters')
-              .setLabel('Victim Character(s) (name or ID, comma-separated)')
+              // SHORTENED LABEL TO 45 CHARACTERS
+              .setLabel('Victim Character(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
@@ -217,14 +218,16 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('attacker_characters')
-              .setLabel('Attacker Character(s) (name or ID, comma-separated)')
+              // SHORTENED LABEL TO 45 CHARACTERS
+              .setLabel('Attacker Character(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('attacker_alliances')
-              .setLabel('Attacker Alliance(s) (name or ID, comma-separated)')
+              // SHORTENED LABEL TO 45 CHARACTERS
+              .setLabel('Attacker Alliance(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
