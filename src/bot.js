@@ -2,8 +2,9 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { listenToRedisQ } = require('./zkill/redisq');
+const { getAllFeeds } = require('./feeds');
 
-// Create Discord client
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
   partials: [Partials.Channel]
@@ -20,9 +21,27 @@ for (const file of commandFiles) {
   }
 }
 
-// Bot ready event
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
+  // Start single RedisQ poller for all feeds
+  listenToRedisQ('miseryengine', async (killmail) => {
+    // Get all feeds (channelId, feedName, filters)
+    const feeds = getAllFeeds();
+    for (const { channelId, feedName, filters } of feeds) {
+      try {
+        if (applyFilters(killmail, filters)) {
+          const channel = await client.channels.fetch(channelId).catch(() => null);
+          if (channel) {
+            await channel.send({
+              content: `New killmail for feed \`${feedName}\`: https://zkillboard.com/kill/${killmail.killID}/`
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`Error posting killmail for feed ${feedName} in channel ${channelId}:`, err);
+      }
+    }
+  });
 });
 
 // Main interaction handler
@@ -33,7 +52,6 @@ client.on('interactionCreate', async interaction => {
       const command = client.commands.get(interaction.commandName);
       if (command) await command.execute(interaction);
     }
-
     // Modal submits
     else if (interaction.isModalSubmit()) {
       if (interaction.customId.startsWith('addfeed-modal')) {
@@ -47,15 +65,13 @@ client.on('interactionCreate', async interaction => {
         await editfeed.handleModal(interaction);
       }
     }
-
     // Button clicks (step buttons for addfeed)
     else if (interaction.isButton()) {
-  if (interaction.customId.startsWith('addfeed-')) {
-    const addfeed = require('./commands/addfeed');
-    await addfeed.handleButton(interaction);
-  }
-}
-
+      if (interaction.customId.startsWith('addfeed-next-step')) {
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleButton(interaction);
+      }
+    }
     // String select menus (stopfeed)
     else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'stopfeed-select') {
@@ -67,9 +83,9 @@ client.on('interactionCreate', async interaction => {
     console.error('Interaction error:', err);
     try {
       if (interaction.replied || interaction.deferred) {
-        await interaction.followUp({ content: 'There was an error while executing this interaction.', ephemeral: true });
+        await interaction.followUp({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
       } else {
-        await interaction.reply({ content: 'There was an error while executing this interaction.', ephemeral: true });
+        await interaction.reply({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
       }
     } catch (err2) {
       console.error('Error sending error reply:', err2);
@@ -78,3 +94,10 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// --- Helper: filter logic ---
+function applyFilters(killmail, filters) {
+  // Implement your full filtering logic here.
+  // For demo, always return true. Replace with your own field checks!
+  return true;
+}
