@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
@@ -37,9 +37,19 @@ client.once('ready', () => {
         if (applyFilters(killmail, filters)) {
           const channel = await client.channels.fetch(channel_id).catch(() => null);
           if (channel) {
-            await channel.send({
-              content: `New killmail for feed \`${feed_name}\`: https://zkillboard.com/kill/${killmail.killID}/`
-            });
+            // Build a Discord embed for the killmail
+            const embed = new EmbedBuilder()
+              .setTitle(`Killmail: ${killmail.killID}`)
+              .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
+              .setDescription(`New killmail for feed \`${feed_name}\``)
+              .setColor(0xff0000)
+              .addFields(
+                { name: 'Victim', value: killmail.victim?.character || 'Unknown', inline: true },
+                { name: 'Ship', value: killmail.victim?.ship_type || 'Unknown', inline: true },
+                { name: 'System', value: killmail.solar_system?.name || 'Unknown', inline: true },
+                { name: 'Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
+              );
+            await channel.send({ embeds: [embed] });
           }
         }
       } catch (err) {
@@ -110,9 +120,6 @@ function applyFilters(killmail, filters) {
     if (!str) return [];
     return str.split(',').map(s => s.trim()).filter(Boolean);
   }
-
-  // Each filter: if set, must match
-  // Adjust killmail property paths to match your payload!
 
   // Region
   if (filters.region) {
