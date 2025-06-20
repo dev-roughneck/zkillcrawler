@@ -50,11 +50,11 @@ client.on('interactionCreate', async interaction => {
 
     // Button clicks (step buttons for addfeed)
     else if (interaction.isButton()) {
-      if (interaction.customId.startsWith('addfeed-step')) {
-        const addfeed = require('./commands/addfeed');
-        await addfeed.handleButton(interaction);
-      }
-    }
+  if (interaction.customId.startsWith('addfeed-')) {
+    const addfeed = require('./commands/addfeed');
+    await addfeed.handleButton(interaction);
+  }
+}
 
     // String select menus (stopfeed)
     else if (interaction.isStringSelectMenu()) {
