@@ -74,11 +74,16 @@ client.on('interactionCreate', async interaction => {
         await addfeed.handleButton(interaction);
       }
     }
-    // String select menus (stopfeed)
+    // String select menus (stopfeed and addfeed logic)
     else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'stopfeed-select') {
         const stopfeed = require('./commands/stopfeed');
         await stopfeed.handleSelect(interaction);
+      }
+      // Addfeed select logic (AND/OR/IF for advanced filtering)
+      else if (interaction.customId.startsWith('logicmode-')) {
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleSelect(interaction);
       }
     }
   } catch (err) {
@@ -98,6 +103,15 @@ client.on('interactionCreate', async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 
 // --- Helper: filter logic ---
+function checkFilter(ids, killmailIds, mode = "OR") {
+  if (!ids || ids.length === 0) return true;
+  if (!killmailIds || killmailIds.length === 0) return false;
+  if (mode === "AND") return ids.every(id => killmailIds.includes(id));
+  if (mode === "OR") return ids.some(id => killmailIds.includes(id));
+  if (mode === "IF") return ids.length === 0 || ids.some(id => killmailIds.includes(id));
+  return true;
+}
+
 function applyFilters(killmail, filters) {
   // If no filters, allow everything
   if (!filters || Object.keys(filters).length === 0) return true;
@@ -108,7 +122,7 @@ function applyFilters(killmail, filters) {
       killmail.victim?.corporation_id,
       ...(killmail.attackers?.map(a => a.corporation_id) ?? [])
     ].filter(Boolean);
-    if (!involvedCorpIds.some(id => filters.corporationIds.includes(id))) return false;
+    if (!checkFilter(filters.corporationIds, involvedCorpIds, filters.corporationIdsMode || "OR")) return false;
   }
 
   // Character filter
@@ -117,20 +131,76 @@ function applyFilters(killmail, filters) {
       killmail.victim?.character_id,
       ...(killmail.attackers?.map(a => a.character_id) ?? [])
     ].filter(Boolean);
-    if (!involvedCharIds.some(id => filters.characterIds.includes(id))) return false;
+    if (!checkFilter(filters.characterIds, involvedCharIds, filters.characterIdsMode || "OR")) return false;
+  }
+
+  // Alliance filter
+  if (filters.allianceIds && filters.allianceIds.length > 0) {
+    const involvedAllianceIds = [
+      killmail.victim?.alliance_id,
+      ...(killmail.attackers?.map(a => a.alliance_id) ?? [])
+    ].filter(Boolean);
+    if (!checkFilter(filters.allianceIds, involvedAllianceIds, filters.allianceIdsMode || "OR")) return false;
+  }
+
+  // Attacker Corporation filter
+  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
+    const attackerCorpIds = (killmail.attackers ?? []).map(a => a.corporation_id).filter(Boolean);
+    if (!checkFilter(filters.attackerCorporationIds, attackerCorpIds, filters.attackerCorporationIdsMode || "OR")) return false;
+  }
+
+  // Attacker Character filter
+  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
+    const attackerCharIds = (killmail.attackers ?? []).map(a => a.character_id).filter(Boolean);
+    if (!checkFilter(filters.attackerCharacterIds, attackerCharIds, filters.attackerCharacterIdsMode || "OR")) return false;
+  }
+
+  // Attacker Alliance filter
+  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
+    const attackerAllianceIds = (killmail.attackers ?? []).map(a => a.alliance_id).filter(Boolean);
+    if (!checkFilter(filters.attackerAllianceIds, attackerAllianceIds, filters.attackerAllianceIdsMode || "OR")) return false;
+  }
+
+  // Region filter (by regionId, not region_name)
+  if (filters.regionIds && filters.regionIds.length > 0) {
+    const regionId = killmail.region_id || null;
+    if (!checkFilter(filters.regionIds, [regionId].filter(Boolean), filters.regionIdsMode || "OR")) return false;
+  }
+
+  // System filter
+  if (filters.systemIds && filters.systemIds.length > 0) {
+    const systemId = killmail.solar_system_id || null;
+    if (!checkFilter(filters.systemIds, [systemId].filter(Boolean), filters.systemIdsMode || "OR")) return false;
+  }
+
+  // Ship Type filter
+  if (filters.shipTypeIds && filters.shipTypeIds.length > 0) {
+    const shipTypeId = killmail.victim?.ship_type_id || null;
+    if (!checkFilter(filters.shipTypeIds, [shipTypeId].filter(Boolean), filters.shipTypeIdsMode || "OR")) return false;
   }
 
   // Minimum ISK value filter
   if (filters.minValue && killmail.zkb?.totalValue) {
     if (killmail.zkb.totalValue < filters.minValue) return false;
   }
-
-  // Region filter (assuming killmail contains region_name)
-  if (filters.regions && filters.regions.length > 0) {
-    if (!filters.regions.includes(killmail.region_name)) return false;
+  // Maximum ISK value filter
+  if (filters.maxValue && killmail.zkb?.totalValue) {
+    if (killmail.zkb.totalValue > filters.maxValue) return false;
   }
 
-  // Add more filter types as needed...
+  // Minimum attackers filter
+  if (filters.minAttackers && Array.isArray(killmail.attackers)) {
+    if (killmail.attackers.length < filters.minAttackers) return false;
+  }
+  // Maximum attackers filter
+  if (filters.maxAttackers && Array.isArray(killmail.attackers)) {
+    if (killmail.attackers.length > filters.maxAttackers) return false;
+  }
+
+  // Backward compatibility: regions as string array (region_name)
+  if (filters.regions && Array.isArray(filters.regions) && filters.regions.length > 0 && killmail.region_name) {
+    if (!filters.regions.includes(killmail.region_name)) return false;
+  }
 
   // If all filters passed
   return true;
