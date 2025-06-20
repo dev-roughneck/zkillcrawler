@@ -31,13 +31,10 @@ for (const file of commandFiles) {
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
-  let firstKillmailLogged = false;
   listenToRedisQ(async (killmail) => {
     try {
-      if (!firstKillmailLogged) {
-        console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
-        firstKillmailLogged = true;
-      }
+      // Log every killmail for debugging
+      console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
 
       // --- Name resolution for victim, ship, system, corp, alliance ---
       const victim = killmail.killmail?.victim || {};
@@ -96,11 +93,19 @@ client.once('ready', () => {
         killmailWithNames.attackers = killmail.killmail?.attackers || [];
       }
 
+      console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
       for (const { channel_id, feed_name, filters } of feeds) {
         try {
-          if (await applyFilters(killmailWithNames, filters)) {
-            const channel = await client.channels.fetch(channel_id).catch(() => null);
+          const passes = await applyFilters(killmailWithNames, filters);
+          console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
+          if (passes) {
+            // Attempt to fetch and post to the channel
+            const channel = await client.channels.fetch(channel_id).catch((err) => {
+              console.error(`Could not fetch channel ${channel_id}:`, err);
+              return null;
+            });
             if (channel) {
+              console.log(`Posting killmail to channel ${channel_id}`);
               const embed = new EmbedBuilder()
                 .setTitle(`Killmail: ${killmail.killID}`)
                 .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
@@ -115,6 +120,9 @@ client.once('ready', () => {
                   { name: 'ISK Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
                 );
               await channel.send({ embeds: [embed] });
+              console.log("Posted embed to Discord.");
+            } else {
+              console.error(`Channel ${channel_id} not found or bot has no access.`);
             }
           }
         } catch (err) {
@@ -179,7 +187,6 @@ client.on('interactionCreate', async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 
 // --- Helper: filter logic ---
-// Now supports names thanks to EVE Universe lookups in killmailWithNames
 async function applyFilters(killmail, filters) {
   // If no filters, always match
   if (!filters || Object.keys(filters).length === 0) return true;
