@@ -1,58 +1,87 @@
-const fs = require('fs');
 const path = require('path');
+const Database = require('better-sqlite3');
 
-const FEEDS_FILE = path.join(__dirname, 'feeds.json');
+// Location of the feeds database file
+const DB_FILE = path.join(__dirname, 'feeds.db');
+const db = new Database(DB_FILE);
 
-// Get feeds for a specific channel
+// Create the feeds table if it doesn't exist
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS feeds (
+    channelId TEXT NOT NULL,
+    feedName TEXT NOT NULL,
+    filters TEXT,
+    PRIMARY KEY (channelId, feedName)
+  )
+`).run();
+
+/**
+ * Get all feeds for a specific channel.
+ * @param {string} channelId
+ * @returns {Object} feedName -> {filters}
+ */
 function getFeeds(channelId) {
-  const all = loadFeeds();
-  return all[channelId] || {};
+  const rows = db.prepare(
+    'SELECT feedName, filters FROM feeds WHERE channelId = ?'
+  ).all(channelId);
+  const feeds = {};
+  for (const row of rows) {
+    feeds[row.feedName] = { filters: JSON.parse(row.filters || '{}') };
+  }
+  return feeds;
 }
 
-// Get all feeds as a flat array: { channelId, feedName, filters }
+/**
+ * Get all feeds as a flat array.
+ * @returns {Array} [{channelId, feedName, filters}]
+ */
 function getAllFeeds() {
-  const all = loadFeeds();
-  const flat = [];
-  for (const channelId of Object.keys(all)) {
-    for (const feedName of Object.keys(all[channelId])) {
-      flat.push({ channelId, feedName, filters: all[channelId][feedName].filters });
-    }
-  }
-  return flat;
+  const rows = db.prepare(
+    'SELECT channelId, feedName, filters FROM feeds'
+  ).all();
+  return rows.map(row => ({
+    channelId: row.channelId,
+    feedName: row.feedName,
+    filters: JSON.parse(row.filters || '{}')
+  }));
 }
 
+/**
+ * Check if a feed exists.
+ * @param {string} channelId
+ * @param {string} feedName
+ * @returns {boolean}
+ */
 function feedExists(channelId, feedName) {
-  const all = loadFeeds();
-  return all[channelId] && all[channelId][feedName];
+  const row = db.prepare(
+    'SELECT 1 FROM feeds WHERE channelId = ? AND feedName = ?'
+  ).get(channelId, feedName);
+  return !!row;
 }
 
+/**
+ * Set or update a feed.
+ * @param {string} channelId
+ * @param {string} feedName
+ * @param {Object} feedObj
+ */
 function setFeed(channelId, feedName, feedObj) {
-  const all = loadFeeds();
-  if (!all[channelId]) all[channelId] = {};
-  all[channelId][feedName] = feedObj;
-  saveFeeds(all);
+  db.prepare(`
+    INSERT INTO feeds (channelId, feedName, filters)
+    VALUES (?, ?, ?)
+    ON CONFLICT(channelId, feedName) DO UPDATE SET filters=excluded.filters
+  `).run(channelId, feedName, JSON.stringify(feedObj.filters || {}));
 }
 
+/**
+ * Delete a feed.
+ * @param {string} channelId
+ * @param {string} feedName
+ */
 function deleteFeed(channelId, feedName) {
-  const all = loadFeeds();
-  if (all[channelId]) {
-    delete all[channelId][feedName];
-    if (Object.keys(all[channelId]).length === 0) delete all[channelId];
-    saveFeeds(all);
-  }
-}
-
-function loadFeeds() {
-  if (!fs.existsSync(FEEDS_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(FEEDS_FILE, 'utf8')) || {};
-  } catch {
-    return {};
-  }
-}
-
-function saveFeeds(all) {
-  fs.writeFileSync(FEEDS_FILE, JSON.stringify(all, null, 2));
+  db.prepare(
+    'DELETE FROM feeds WHERE channelId = ? AND feedName = ?'
+  ).run(channelId, feedName);
 }
 
 module.exports = {
