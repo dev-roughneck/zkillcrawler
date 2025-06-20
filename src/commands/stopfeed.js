@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
 const { getFeeds, deleteFeed } = require('../feeds');
-const { stopRedisQPolling } = require('../zkill/redisq');
 const { livePolls } = require('./addfeed'); // If you use livePolls for per-feed state
 
 module.exports = {
@@ -38,7 +37,6 @@ module.exports = {
     if (!feeds[feedName]) {
       return interaction.update({ content: `Feed \`${feedName}\` not found.`, components: [] });
     }
-    stopRedisQPolling(feedName, interaction.channel.id, livePolls);
     deleteFeed(interaction.channel.id, feedName);
     await interaction.update({ content: `Feed \`${feedName}\` removed from this channel.`, components: [] });
   }
