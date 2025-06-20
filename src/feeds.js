@@ -8,13 +8,13 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_FILE = path.join(DATA_DIR, 'botdata.sqlite');
 const db = new Database(DB_FILE);
 
-// Create the feeds table if it doesn't exist
+// Create the feeds table if it doesn't exist (snake_case column names)
 db.prepare(`
   CREATE TABLE IF NOT EXISTS feeds (
-    channelId TEXT NOT NULL,
-    feedName TEXT NOT NULL,
-    filters TEXT,
-    PRIMARY KEY (channelId, feedName)
+    channel_id TEXT NOT NULL,
+    feed_name TEXT NOT NULL,
+    filters_json TEXT,
+    PRIMARY KEY (channel_id, feed_name)
   )
 `).run();
 
@@ -27,7 +27,6 @@ function validateFilters(filters) {
   const valid = {};
   if (!filters || typeof filters !== 'object') return valid;
 
-  // Array of numbers for IDs, and string for logic (mode)
   [
     'corporationIds',
     'characterIds',
@@ -60,7 +59,6 @@ function validateFilters(filters) {
   if (typeof filters.maxAttackers === 'number' && !isNaN(filters.maxAttackers)) {
     valid.maxAttackers = filters.maxAttackers;
   }
-  // For compatibility if any old feeds had a string list for regions
   if (Array.isArray(filters.regions)) {
     valid.regions = filters.regions.filter(s => typeof s === 'string');
   }
@@ -75,27 +73,27 @@ function validateFilters(filters) {
  */
 function getFeeds(channelId) {
   const rows = db.prepare(
-    'SELECT feedName, filters FROM feeds WHERE channelId = ?'
+    'SELECT feed_name, filters_json FROM feeds WHERE channel_id = ?'
   ).all(channelId);
   const feeds = {};
   for (const row of rows) {
-    feeds[row.feedName] = { filters: validateFilters(JSON.parse(row.filters || '{}')) };
+    feeds[row.feed_name] = { filters: validateFilters(JSON.parse(row.filters_json || '{}')) };
   }
   return feeds;
 }
 
 /**
  * Get all feeds as a flat array.
- * @returns {Array} [{channelId, feedName, filters}]
+ * @returns {Array} [{channel_id, feed_name, filters}]
  */
 function getAllFeeds() {
   const rows = db.prepare(
-    'SELECT channelId, feedName, filters FROM feeds'
+    'SELECT channel_id, feed_name, filters_json FROM feeds'
   ).all();
   return rows.map(row => ({
-    channelId: row.channelId,
-    feedName: row.feedName,
-    filters: validateFilters(JSON.parse(row.filters || '{}'))
+    channel_id: row.channel_id,
+    feed_name: row.feed_name,
+    filters: validateFilters(JSON.parse(row.filters_json || '{}'))
   }));
 }
 
@@ -107,7 +105,7 @@ function getAllFeeds() {
  */
 function feedExists(channelId, feedName) {
   const row = db.prepare(
-    'SELECT 1 FROM feeds WHERE channelId = ? AND feedName = ?'
+    'SELECT 1 FROM feeds WHERE channel_id = ? AND feed_name = ?'
   ).get(channelId, feedName);
   return !!row;
 }
@@ -121,9 +119,9 @@ function feedExists(channelId, feedName) {
 function setFeed(channelId, feedName, feedObj) {
   const safeFilters = validateFilters(feedObj.filters || {});
   db.prepare(`
-    INSERT INTO feeds (channelId, feedName, filters)
+    INSERT INTO feeds (channel_id, feed_name, filters_json)
     VALUES (?, ?, ?)
-    ON CONFLICT(channelId, feedName) DO UPDATE SET filters=excluded.filters
+    ON CONFLICT(channel_id, feed_name) DO UPDATE SET filters_json=excluded.filters_json
   `).run(channelId, feedName, JSON.stringify(safeFilters));
 }
 
@@ -134,7 +132,7 @@ function setFeed(channelId, feedName, feedObj) {
  */
 function deleteFeed(channelId, feedName) {
   db.prepare(
-    'DELETE FROM feeds WHERE channelId = ? AND feedName = ?'
+    'DELETE FROM feeds WHERE channel_id = ? AND feed_name = ?'
   ).run(channelId, feedName);
 }
 
