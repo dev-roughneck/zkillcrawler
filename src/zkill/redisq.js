@@ -1,14 +1,14 @@
 const fetch = require('node-fetch');
 
 /**
- * Polls the RedisQ API for killmails and calls your handler for each one.
- * @param {string} feedName - The name of the RedisQ queue.
+ * Polls the new community RedisQ API for killmails and calls your handler for each one.
  * @param {function} handler - Callback for each killmail.
  */
-async function listenToRedisQ(feedName, handler) {
+async function listenToRedisQ(handler) {
+  const queueId = 'misery engine'; // your queue ID
   while (true) {
     try {
-      const response = await fetch('https://redisq.zkillboard.com/listen.php?queue=' + encodeURIComponent(feedName));
+      const response = await fetch('https://zkillredisq.stream/listen.php?queueID=' + encodeURIComponent(queueId));
       const data = await response.json();
       if (data && data.package && Object.keys(data.package).length > 0) {
         await handler(data.package);
