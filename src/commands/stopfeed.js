@@ -14,15 +14,7 @@ module.exports = {
     if (!feedNames.length) {
       return interaction.reply({ content: 'No feeds to remove in this channel.', ephemeral: true });
     }
-    // If only one feed, remove directly
-    if (feedNames.length === 1) {
-      const feedName = feedNames[0];
-      const pollTag = `${interaction.channel.id}-${feedName}`;
-      stopRedisQPolling(pollTag);
-      deleteFeed(interaction.channel.id, feedName);
-      return interaction.reply({ content: `Feed \`${feedName}\` removed from this channel.`, ephemeral: true });
-    }
-    // Multiple feeds: let user select which to remove
+    // Always present a dropdown, even for only one feed
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('stopfeed-select')
       .setPlaceholder('Select a feed to remove')
@@ -46,8 +38,7 @@ module.exports = {
     if (!feeds[feedName]) {
       return interaction.update({ content: `Feed \`${feedName}\` not found.`, components: [] });
     }
-    const pollTag = `${interaction.channel.id}-${feedName}`;
-    stopRedisQPolling(pollTag);
+    stopRedisQPolling(feedName, interaction.channel.id, livePolls);
     deleteFeed(interaction.channel.id, feedName);
     await interaction.update({ content: `Feed \`${feedName}\` removed from this channel.`, components: [] });
   }
