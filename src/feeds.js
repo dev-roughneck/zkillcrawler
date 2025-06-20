@@ -1,41 +1,64 @@
-const db = require('./db');
+const fs = require('fs');
+const path = require('path');
 
+const FEEDS_FILE = path.join(__dirname, 'feeds.json');
+
+// Get feeds for a specific channel
 function getFeeds(channelId) {
-  const rows = db.prepare('SELECT feed_name, filters_json FROM feeds WHERE channel_id = ?').all(channelId);
-  const feeds = {};
-  for (const row of rows) {
-    feeds[row.feed_name] = { filters: JSON.parse(row.filters_json) };
+  const all = loadFeeds();
+  return all[channelId] || {};
+}
+
+// Get all feeds as a flat array: { channelId, feedName, filters }
+function getAllFeeds() {
+  const all = loadFeeds();
+  const flat = [];
+  for (const channelId of Object.keys(all)) {
+    for (const feedName of Object.keys(all[channelId])) {
+      flat.push({ channelId, feedName, filters: all[channelId][feedName].filters });
+    }
   }
-  return feeds;
+  return flat;
 }
 
-function getFeed(channelId, feedName) {
-  const row = db.prepare('SELECT filters_json FROM feeds WHERE channel_id = ? AND feed_name = ?').get(channelId, feedName);
-  return row ? { filters: JSON.parse(row.filters_json) } : null;
+function feedExists(channelId, feedName) {
+  const all = loadFeeds();
+  return all[channelId] && all[channelId][feedName];
 }
 
-function setFeed(channelId, feedName, data) {
-  db.prepare(
-    'INSERT INTO feeds (channel_id, feed_name, filters_json) VALUES (?, ?, ?) ON CONFLICT(channel_id, feed_name) DO UPDATE SET filters_json = excluded.filters_json'
-  ).run(channelId, feedName, JSON.stringify(data.filters));
+function setFeed(channelId, feedName, feedObj) {
+  const all = loadFeeds();
+  if (!all[channelId]) all[channelId] = {};
+  all[channelId][feedName] = feedObj;
+  saveFeeds(all);
 }
 
 function deleteFeed(channelId, feedName) {
-  db.prepare('DELETE FROM feeds WHERE channel_id = ? AND feed_name = ?').run(channelId, feedName);
+  const all = loadFeeds();
+  if (all[channelId]) {
+    delete all[channelId][feedName];
+    if (Object.keys(all[channelId]).length === 0) delete all[channelId];
+    saveFeeds(all);
+  }
 }
 
-function listFeeds(channelId) {
-  const rows = db.prepare('SELECT feed_name FROM feeds WHERE channel_id = ?').all(channelId);
-  return rows.map(r => r.feed_name);
+function loadFeeds() {
+  if (!fs.existsSync(FEEDS_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(FEEDS_FILE, 'utf8')) || {};
+  } catch {
+    return {};
+  }
 }
 
-// Returns true if the feed with this name exists for this channel
-function feedExists(channelId, feedName) {
-  const row = db.prepare('SELECT 1 FROM feeds WHERE channel_id = ? AND feed_name = ?').get(channelId, feedName);
-  return !!row;
+function saveFeeds(all) {
+  fs.writeFileSync(FEEDS_FILE, JSON.stringify(all, null, 2));
 }
 
-// Kept for API compatibility, no-op
-function reloadFeeds() {}
-
-module.exports = { getFeeds, getFeed, setFeed, deleteFeed, listFeeds, feedExists, reloadFeeds };
+module.exports = {
+  getFeeds,
+  getAllFeeds,
+  setFeed,
+  deleteFeed,
+  feedExists,
+};
