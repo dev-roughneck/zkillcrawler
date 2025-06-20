@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { listenToRedisQ } = require('./zkill/redisq');
+const listenToRedisQ = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
 const { formatKillmailEmbed } = require('./embeds'); // <-- Use your enhanced embed function
 
