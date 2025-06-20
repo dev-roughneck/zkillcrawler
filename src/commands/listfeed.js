@@ -3,7 +3,7 @@ const { getFeeds } = require('../feeds');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('listfeed')
+    .setName('listfeeds')
     .setDescription('List all zKillboard feeds in this channel'),
 
   async execute(interaction) {
@@ -14,8 +14,13 @@ module.exports = {
     }
     let msg = '**Feeds in this channel:**\n';
     for (const name of feedNames) {
-      const f = feeds[name];
-      msg += `• \`${name}\` — Filters: \`${JSON.stringify(f)}\`\n`;
+      const { filters } = feeds[name];
+      // Clean up display: show only non-empty filters for brevity
+      const filterDisplay = Object.entries(filters)
+        .filter(([k, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0))
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+        .join('; ');
+      msg += `• \`${name}\` — ${filterDisplay ? `Filters: \`${filterDisplay}\`` : 'No filters'}\n`;
     }
     await interaction.reply({ content: msg, ephemeral: true });
   }
