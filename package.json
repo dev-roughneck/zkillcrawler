@@ -1,17 +1,11 @@
 {
   "name": "zkillcrawler",
   "version": "1.0.0",
-  "description": "Discord bot for zKillboard notifications with advanced filtering and sqlite persistence",
   "main": "src/bot.js",
   "type": "commonjs",
-  "scripts": {
-    "start": "node src/bot.js"
-  },
+  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.13.0",
-    "better-sqlite3": "^9.4.4",
-    "node-fetch": "^3.3.2",
-    "ws": "^8.16.0",
-    "dotenv": "^16.4.5"
+    "discord.js": "^14.0.0",
+    "sqlite3": "^5.1.0"
   }
 }
