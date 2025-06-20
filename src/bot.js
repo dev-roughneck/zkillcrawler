@@ -29,20 +29,20 @@ client.once('ready', () => {
     console.log('[BOT] Handling killmail:', killmail.killID || killmail.killmail_id);
     // Get all feeds (channelId, feedName, filters)
     const feeds = getAllFeeds();
-    for (const { channelId, feedName, filters } of feeds) {
-      try {
-        if (applyFilters(killmail, filters)) {
-          const channel = await client.channels.fetch(channelId).catch(() => null);
-          if (channel) {
-            // Use the embed!
-            const embed = await formatKillmailEmbed(killmail, feedName);
-            await channel.send({ embeds: [embed] });
-          }
-        }
-      } catch (err) {
-        console.error(`Error posting killmail for feed ${feedName} in channel ${channelId}:`, err);
+    for (const { channel_id, feed_name, filters } of feeds) {
+  try {
+    if (applyFilters(killmail, filters)) {
+      const channel = await client.channels.fetch(channel_id).catch(() => null);
+      if (channel) {
+        await channel.send({
+          content: `New killmail for feed \`${feed_name}\`: https://zkillboard.com/kill/${killmail.killID}/`
+        });
       }
     }
+  } catch (err) {
+    console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
+  }
+}
   });
 });
 
