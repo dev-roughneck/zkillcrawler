@@ -1,31 +1,36 @@
+// src/zkill/redisq.js
 const fetch = require('node-fetch');
+
+// Store pollers globally, keyed by pollTag (e.g. `${channelId}-${feedName}`)
+const activePolls = {};
 
 /**
  * Listens to zKillboard RedisQ for killmail events.
- * @param {string} queueID - The RedisQ queue ID.
- * @param {function} onKillmail - Callback for received killmail.
+ * @param {string} queueID - The RedisQ queue ID (pollTag, e.g. `${channelId}-${feedName}`).
+ * @param {function} onKillmail - Callback for each killmail.
  */
-function listenToRedisQ(queueID, onKillmail) {
-  let delay = 1000; // start with 1 second
-  const maxDelay = 10 * 60 * 1000; // up to 10 minutes
+function startRedisQPolling(queueID, onKillmail) {
+  // If already polling, stop and restart
+  if (activePolls[queueID]) {
+    stopRedisQPolling(queueID);
+  }
+  let stopped = false;
+  let delay = 1000;
+  const maxDelay = 10 * 60 * 1000;
   let lastError = null;
   let lastErrorLogTime = 0;
-  let started = false;
 
   async function poll() {
-    if (!started) {
-      console.log(`[REDISQ] Polling started with queueID: ${queueID}`);
-      started = true;
-    }
+    if (stopped) return;
     try {
       const res = await fetch(`https://zkillredisq.stream/listen.php?queueID=${queueID}`);
       if (!res.ok) throw new Error(`RedisQ HTTP error: ${res.status}`);
       const data = await res.json();
       if (data && data.package && (data.package.killID || data.package.killmail_id)) {
-        console.log(`[REDISQ] Received killmail: ${data.package.killID || data.package.killmail_id}`);
+        console.log(`[REDISQ] (${queueID}) Received killmail: ${data.package.killID || data.package.killmail_id}`);
         onKillmail(data.package);
       }
-      delay = 1000; // reset delay on success
+      delay = 1000;
       lastError = null;
     } catch (err) {
       const now = Date.now();
@@ -34,17 +39,46 @@ function listenToRedisQ(queueID, onKillmail) {
         err.code !== lastError.code ||
         now - lastErrorLogTime > 5 * 60 * 1000
       ) {
-        console.error('[REDISQ] Error polling RedisQ:', err);
+        console.error(`[REDISQ] (${queueID}) Error polling RedisQ:`, err);
         lastError = err;
         lastErrorLogTime = now;
       }
-      // Exponential backoff
       delay = Math.min(delay * 2, maxDelay);
     } finally {
-      setTimeout(poll, delay);
+      if (!stopped) {
+        activePolls[queueID].timeout = setTimeout(poll, delay);
+      }
     }
   }
+
+  activePolls[queueID] = {
+    stop() {
+      stopped = true;
+      if (activePolls[queueID].timeout) {
+        clearTimeout(activePolls[queueID].timeout);
+      }
+      delete activePolls[queueID];
+      console.log(`[REDISQ] (${queueID}) Polling stopped.`);
+    },
+    timeout: null,
+  };
+
   poll();
 }
 
-module.exports = { listenToRedisQ };
+/**
+ * Stops polling for a given queueID (pollTag).
+ * @param {string} queueID
+ */
+function stopRedisQPolling(queueID) {
+  if (activePolls[queueID]) {
+    activePolls[queueID].stop();
+  }
+}
+
+module.exports = {
+  listenToRedisQ: startRedisQPolling, // alias for backward compatibility
+  startRedisQPolling,
+  stopRedisQPolling,
+  // Optionally export activePolls for debugging
+};
