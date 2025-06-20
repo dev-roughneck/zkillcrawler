@@ -8,8 +8,10 @@
     "start": "node src/bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.0.0",
-    "sqlite3": "^5.1.0",
-    "dotenv": "^16.0.0"
-  }
+  "discord.js": "^14.0.0",
+  "sqlite3": "^5.1.0",
+  "better-sqlite3": "^8.0.0",
+  "dotenv": "^16.0.0",
+  "node-fetch": "^2.6.7"
+}
 }
