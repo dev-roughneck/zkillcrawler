@@ -10,31 +10,76 @@ async function formatKillmailEmbed(killmail) {
     killmail.victim?.alliance_id ? eveu.resolveAlliance(killmail.victim.alliance_id) : undefined,
     killmail.victim?.corporation_id ? eveu.resolveCorporation(killmail.victim.corporation_id) : undefined,
   ]);
+
   const victim = killmail.victim || {};
   const zkb = killmail.zkb || {};
   const attackers = killmail.attackers || [];
-  const finalBlow = attackers.find(a => a.final_blow);
+  const finalBlow = attackers.find(a => a.final_blow) || {};
+  const finalBlowAlliance = finalBlow.alliance_id ? await eveu.resolveAlliance(finalBlow.alliance_id) : undefined;
+  const finalBlowCorp = finalBlow.corporation_id ? await eveu.resolveCorporation(finalBlow.corporation_id) : undefined;
 
-  let desc = `**Victim:** ${victim.character_id || 'Unknown'} (${corp ? corp.name : 'Unknown Corp'})\n`;
-  desc += `**Ship:** ${ship ? ship.name : 'Unknown'}\n`;
-  desc += `**System:** ${system ? system.name : 'Unknown'}\n`;
-  if (region) desc += `**Region:** ${region.name}\n`;
-  desc += `**Time:** ${killmail.killmail_time || ''}\n`;
-  desc += `**Value:** ${zkb.totalValue ? zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'}\n`;
-  if (finalBlow) {
-    desc += `**Final blow by:** ${finalBlow.character_id || 'Unknown'} (${finalBlow.corporation_id || 'Unknown Corp'})\n`;
-  }
-  if (alliance) desc += `**Alliance:** ${alliance.name}\n`;
+  // Victim details
+  const victimPilot = victim.character_id
+    ? await eveu.resolveCharacter(victim.character_id).then(c => c?.name).catch(() => undefined)
+    : undefined;
+  const victimCorp = corp ? corp.name : 'Unknown Corp';
+  const victimAlliance = alliance ? alliance.name : 'None';
 
+  // Final blow details
+  const finalBlowPilot = finalBlow.character_id
+    ? await eveu.resolveCharacter(finalBlow.character_id).then(c => c?.name).catch(() => undefined)
+    : undefined;
+  const finalBlowCorpName = finalBlowCorp ? finalBlowCorp.name : (finalBlow.corporation_id || 'Unknown Corp');
+  const finalBlowAllianceName = finalBlowAlliance ? finalBlowAlliance.name : (finalBlow.alliance_id ? finalBlow.alliance_id : 'None');
+
+  // ISK Value
+  const iskValue = zkb.totalValue ? `${Math.round(zkb.totalValue).toLocaleString()} ISK` : 'Unknown';
+
+  // Ship image
+  const shipImage = victim.ship_type_id
+    ? `https://images.evetech.net/types/${victim.ship_type_id}/render?size=128`
+    : undefined;
+
+  // Killmail URL
+  const killUrl = zkb.url || (killmail.killmail_id && killmail.hash
+    ? `https://zkillboard.com/kill/${killmail.killmail_id}/`
+    : 'https://zkillboard.com/');
+
+  // Build the embed
   const embed = new EmbedBuilder()
-    .setTitle('💥 Killmail!')
-    .setURL(zkb.url || 'https://zkillboard.com/')
-    .setDescription(desc)
+    .setTitle(`${victimPilot || 'Unknown pilot'} lost a ${ship ? ship.name : 'Unknown Ship'}`)
+    .setURL(killUrl)
+    .setThumbnail(shipImage)
+    .addFields(
+      { name: 'Pilot', value: victimPilot || 'Unknown', inline: true },
+      { name: 'Corporation', value: victimCorp, inline: true },
+      { name: 'Alliance', value: victimAlliance, inline: true },
+      { name: 'ISK Lost', value: iskValue, inline: true },
+      { name: 'Attackers', value: attackers.length.toString(), inline: true },
+      {
+        name: 'Final Blow',
+        value: [
+          finalBlowPilot || 'Unknown',
+          `**Corp:** ${finalBlowCorpName}`,
+          `**Alliance:** ${finalBlowAllianceName}`
+        ].join('\n'),
+        inline: false
+      }
+    )
+    .setColor(0xff0000)
     .setTimestamp(new Date(killmail.killmail_time))
     .setFooter({ text: 'zKillboard.com', iconURL: 'https://zkillboard.com/img/favicon.png' });
 
-  if (victim.ship_type_id)
-    embed.setThumbnail('https://images.evetech.net/types/' + victim.ship_type_id + '/render?size=64');
+  if (system || region) {
+    embed.addFields({
+      name: 'Location',
+      value: [
+        system ? `${system.name}` : '',
+        region ? `(${region.name})` : ''
+      ].filter(Boolean).join(' '),
+      inline: false
+    });
+  }
 
   return embed;
 }
