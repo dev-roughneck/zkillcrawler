@@ -15,16 +15,16 @@ const { resolveIds } = require('../eveuniverse'); // Helper to resolve names to 
 const addfeedCache = new Map();
 
 // List of filters that support AND/OR/IF logic
-const filterLogicFields = [
-  { key: 'corporationIds', label: 'Victim Corp(s)' },
-  { key: 'characterIds', label: 'Victim Character(s)' },
-  { key: 'allianceIds', label: 'Victim Alliance(s)' },
-  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)' },
-  { key: 'attackerCharacterIds', label: 'Attacker Character(s)' },
-  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)' },
-  { key: 'regionIds', label: 'Region(s)' },
-  { key: 'systemIds', label: 'System(s)' },
-  { key: 'shipTypeIds', label: 'Ship Type(s)' }
+const filterLogicFieldsMaster = [
+  { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations', step: 1 },
+  { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters', step: 1 },
+  { key: 'allianceIds', label: 'Victim Alliance(s)', inputKey: 'alliances', step: 1 },
+  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)', inputKey: 'attacker_corporations', step: 2 },
+  { key: 'attackerCharacterIds', label: 'Attacker Character(s)', inputKey: 'attacker_characters', step: 2 },
+  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances', step: 2 },
+  { key: 'regionIds', label: 'Region(s)', inputKey: 'regions', step: 1 },
+  { key: 'systemIds', label: 'System(s)', inputKey: 'systems', step: 2 },
+  { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes', step: 2 }
 ];
 
 function makeLogicSelect(customId, label, defaultValue = 'OR') {
@@ -183,9 +183,9 @@ module.exports = {
       addfeedCache.set(cacheKey, { ...cache, step3 });
 
       // Finalize: resolve IDs, build filters, save
-      const { step1, step2, logicModes } = addfeedCache.get(cacheKey);
+      const { step1, step2, logicModes, activeLogicFields } = addfeedCache.get(cacheKey);
       const feedName = step1.feedName;
-      const filters = await buildFilterObject(step1, step2, step3, logicModes);
+      const filters = await buildFilterObject(step1, step2, step3, logicModes, activeLogicFields);
 
       setFeed(interaction.channel.id, feedName, { filters });
       addfeedCache.delete(cacheKey);
@@ -255,8 +255,37 @@ module.exports = {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
 
-      // Build selects for each filter with labels as placeholders
-      const components = filterLogicFields.map(f =>
+      // Filter for only non-empty filters
+      const step1 = cache.step1;
+      const step2 = cache.step2;
+      const activeLogicFields = filterLogicFieldsMaster.filter(f => {
+        if (f.step === 1) return step1[f.inputKey] && step1[f.inputKey].length > 0;
+        if (f.step === 2) return step2[f.inputKey] && step2[f.inputKey].length > 0;
+        return false;
+      });
+
+      // Store active fields in cache for final buildFilterObject
+      cache.activeLogicFields = activeLogicFields;
+      addfeedCache.set(cacheKey, cache);
+
+      if (activeLogicFields.length === 0) {
+        // No logic needed, just go to next step
+        return interaction.reply({
+          content: 'No filters were set that need logic selection. Proceeding to the next step.',
+          flags: 1 << 6,
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`addfeed-next-step4|${cacheKey}`)
+                .setLabel('Next')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+      }
+
+      // Build selects for each active filter
+      const components = activeLogicFields.map(f =>
         makeLogicSelect(`logicmode-${f.key}|${cacheKey}`, f.label)
       );
 
@@ -289,7 +318,7 @@ module.exports = {
     if (interaction.customId.startsWith('addfeed-next-step4|')) {
       const [ , cacheKey ] = interaction.customId.split('|');
       const cache = addfeedCache.get(cacheKey);
-      if (!cache || !cache.step1 || !cache.step2 || !cache.logicModes) {
+      if (!cache || !cache.step1 || !cache.step2 /*| !cache.logicModes*/) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
       const modal = new ModalBuilder()
@@ -342,8 +371,9 @@ module.exports = {
       cache.logicModes[filterKey] = interaction.values[0];
       addfeedCache.set(cacheKey, cache);
 
-      // Check if all logic modes are set
-      const allSet = filterLogicFields.every(f => cache.logicModes && cache.logicModes[f.key]);
+      // Only check for the active fields for this session
+      const activeLogicFields = cache.activeLogicFields || [];
+      const allSet = activeLogicFields.every(f => cache.logicModes && cache.logicModes[f.key]);
       if (allSet) {
         // If all are set, enable the "Next" button for user to proceed
         return interaction.reply({
@@ -371,7 +401,7 @@ module.exports = {
 };
 
 // Build the filter object with IDs and logic modes
-async function buildFilterObject(step1, step2, step3, logicModes) {
+async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields) {
   const filters = {};
 
   // Victim
@@ -404,6 +434,16 @@ async function buildFilterObject(step1, step2, step3, logicModes) {
 
   filters.attackerAllianceIds = await resolveIds(step2.attacker_alliances, 'alliance');
   filters.attackerAllianceIdsMode = logicModes?.attackerAllianceIds || 'OR';
+
+  // Only override logic modes for the active fields
+  if (Array.isArray(activeLogicFields)) {
+    for (const f of activeLogicFields) {
+      if (logicModes && logicModes[f.key] !== undefined) {
+        // Use the selected value
+        filters[`${f.key}Mode`] = logicModes[f.key];
+      }
+    }
+  }
 
   // ISK/attackers
   filters.minValue = parseFloat(step3.min_isk.replace(/,/g, '')) || undefined;
