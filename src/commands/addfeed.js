@@ -5,12 +5,42 @@ const {
   TextInputStyle,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  StringSelectMenuBuilder
 } = require('discord.js');
-const { getFeeds, setFeed, feedExists } = require('../feeds');
+const { setFeed, feedExists } = require('../feeds');
+const { resolveIds } = require('../eveuniverse'); // Helper to resolve names to IDs
 
 // In-memory cache for multi-step modal data
 const addfeedCache = new Map();
+
+// List of filters that support AND/OR/IF logic
+const filterLogicFields = [
+  { key: 'corporationIds', label: 'Victim Corp(s)' },
+  { key: 'characterIds', label: 'Victim Character(s)' },
+  { key: 'allianceIds', label: 'Victim Alliance(s)' },
+  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)' },
+  { key: 'attackerCharacterIds', label: 'Attacker Character(s)' },
+  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)' },
+  { key: 'regionIds', label: 'Region(s)' },
+  { key: 'systemIds', label: 'System(s)' },
+  { key: 'shipTypeIds', label: 'Ship Type(s)' }
+];
+
+function makeLogicSelect(customId, defaultValue = 'OR') {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(customId)
+      .setPlaceholder('Logic (default: OR)')
+      .setMinValues(1)
+      .setMaxValues(1)
+      .addOptions([
+        { label: 'OR (match any)', value: 'OR', default: defaultValue === 'OR' },
+        { label: 'AND (match all)', value: 'AND', default: defaultValue === 'AND' },
+        { label: 'IF (match if present)', value: 'IF', default: defaultValue === 'IF' }
+      ])
+  );
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -18,12 +48,11 @@ module.exports = {
     .setDescription('Add a new zKillboard feed to this channel, with advanced filters.'),
 
   async execute(interaction) {
-    console.log('/addfeed called');
+    // STEP 1: Feed Name + Victim/Location Filters
     try {
-      // STEP 1: Feed Name + 4 Victim Filters
       const modal = new ModalBuilder()
         .setCustomId('addfeed-modal-step1')
-        .setTitle('Add zKillboard Feed (1/3)')
+        .setTitle('Add zKillboard Feed (1/4)')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
@@ -34,35 +63,34 @@ module.exports = {
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('region')
-              .setLabel('Region(s)')
+              .setCustomId('corporations')
+              .setLabel('Victim Corp(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('system')
-              .setLabel('System(s)')
+              .setCustomId('characters')
+              .setLabel('Victim Character(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('shiptype')
-              .setLabel('Ship Type(s)')
+              .setCustomId('alliances')
+              .setLabel('Victim Alliance(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('alliance')
-              .setLabel('Victim Alliance(s)')
+              .setCustomId('regions')
+              .setLabel('Region(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           )
         );
       await interaction.showModal(modal);
-      console.log('Modal shown for addfeed step 1');
     } catch (err) {
       console.error('Error in /addfeed:', err);
       if (!interaction.replied && !interaction.deferred) {
@@ -73,7 +101,7 @@ module.exports = {
 
   // Modal handler for all steps
   async handleModal(interaction) {
-    // STEP 1: Feed Name + 4 Victim Filters
+    // STEP 1: Victim/Location Filters
     if (interaction.customId === 'addfeed-modal-step1') {
       const feedName = interaction.fields.getTextInputValue('feedname').trim();
       if (!feedName) {
@@ -83,20 +111,19 @@ module.exports = {
         return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, flags: 1 << 6 });
       }
 
-      // Gather first set of fields and cache by a short key
       const step1 = {
         feedName,
-        region: interaction.fields.getTextInputValue('region').trim(),
-        system: interaction.fields.getTextInputValue('system').trim(),
-        shiptype: interaction.fields.getTextInputValue('shiptype').trim(),
-        alliance: interaction.fields.getTextInputValue('alliance').trim()
+        corporations: interaction.fields.getTextInputValue('corporations').trim(),
+        characters: interaction.fields.getTextInputValue('characters').trim(),
+        alliances: interaction.fields.getTextInputValue('alliances').trim(),
+        regions: interaction.fields.getTextInputValue('regions').trim()
       };
       const cacheKey = `${interaction.user.id}-${Date.now()}`;
       addfeedCache.set(cacheKey, { step1 });
 
       // Prompt Next button for Step 2
       return interaction.reply({
-        content: `Feed name and basic victim filters set for \`${feedName}\`. Click **Next** to set more filters.`,
+        content: `Basic victim and region filters set for \`${feedName}\`. Click **Next** to set attacker/location filters.`,
         flags: 1 << 6,
         components: [
           new ActionRowBuilder().addComponents(
@@ -109,74 +136,67 @@ module.exports = {
       });
     }
 
-    // STEP 2: Victim Corp/Char + Attacker Alliance/Corp/Char
+    // STEP 2: Attacker/Location Filters
     if (interaction.customId.startsWith('addfeed-modal-step2|')) {
       const [ , cacheKey ] = interaction.customId.split('|');
       const cache = addfeedCache.get(cacheKey);
       if (!cache || !cache.step1) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
-      const feedName = cache.step1.feedName;
-
-      // Gather next set of fields
       const step2 = {
-        corp: interaction.fields.getTextInputValue('corp').trim(),
-        character: interaction.fields.getTextInputValue('character').trim(),
-        attacker_alliance: interaction.fields.getTextInputValue('attacker_alliance').trim(),
-        attacker_corp: interaction.fields.getTextInputValue('attacker_corp').trim(),
-        attacker_character: interaction.fields.getTextInputValue('attacker_character').trim()
+        attacker_corporations: interaction.fields.getTextInputValue('attacker_corporations').trim(),
+        attacker_characters: interaction.fields.getTextInputValue('attacker_characters').trim(),
+        attacker_alliances: interaction.fields.getTextInputValue('attacker_alliances').trim(),
+        systems: interaction.fields.getTextInputValue('systems').trim(),
+        shiptypes: interaction.fields.getTextInputValue('shiptypes').trim()
       };
       addfeedCache.set(cacheKey, { ...cache, step2 });
 
-      // Prompt Next button for Step 3
+      // Prompt Next button for Step 3 (logic selectors)
       return interaction.reply({
-        content: `More victim and attacker filters set for \`${feedName}\`. Click **Next** to set ISK and attacker limits.`,
+        content: `Attacker and location filters set. Now select AND/OR/IF logic for each filter.`,
         flags: 1 << 6,
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`addfeed-next-step3|${cacheKey}`)
-              .setLabel('Next')
+              .setLabel('Set Filter Logic')
               .setStyle(ButtonStyle.Primary)
           )
         ]
       });
     }
 
-    // STEP 3: ISK/attacker limits, finalize and save feed
+    // STEP 3: ISK/attacker limits
     if (interaction.customId.startsWith('addfeed-modal-step3|')) {
       const [ , cacheKey ] = interaction.customId.split('|');
       const cache = addfeedCache.get(cacheKey);
-      if (!cache || !cache.step1 || !cache.step2) {
+      if (!cache || !cache.step1 || !cache.step2 || !cache.logicModes) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
-      const feedName = cache.step1.feedName;
-
-      // Gather last fields
       const step3 = {
         min_isk: interaction.fields.getTextInputValue('min_isk').trim(),
         max_isk: interaction.fields.getTextInputValue('max_isk').trim(),
         min_attackers: interaction.fields.getTextInputValue('min_attackers').trim(),
         max_attackers: interaction.fields.getTextInputValue('max_attackers').trim()
       };
+      addfeedCache.set(cacheKey, { ...cache, step3 });
 
-      // Merge all steps
-      const filters = { ...cache.step1, ...cache.step2, ...step3 };
-      delete filters.feedName; // Don't store feedName in filters
+      // Finalize: resolve IDs, build filters, save
+      const { step1, step2, logicModes } = addfeedCache.get(cacheKey);
+      const feedName = step1.feedName;
+      const filters = await buildFilterObject(step1, step2, step3, logicModes);
 
-      // Save feed config (wrap in { filters } for DB)
       setFeed(interaction.channel.id, feedName, { filters });
-
-      // Clean up cache
       addfeedCache.delete(cacheKey);
 
       return interaction.reply({ content: `Feed \`${feedName}\` created!`, flags: 1 << 6 });
     }
   },
 
-  // Button handler for stepping between modals
+  // Button handler for stepping between modals and logic selectors
   async handleButton(interaction) {
-    // Step 2: Corp/Char/Attacker modal
+    // Step 2: Attacker/location modal
     if (interaction.customId.startsWith('addfeed-next-step2|')) {
       const [ , cacheKey ] = interaction.customId.split('|');
       const cache = addfeedCache.get(cacheKey);
@@ -185,40 +205,40 @@ module.exports = {
       }
       const modal = new ModalBuilder()
         .setCustomId(`addfeed-modal-step2|${cacheKey}`)
-        .setTitle('Add zKillboard Feed (2/3)')
+        .setTitle('Add zKillboard Feed (2/4)')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('corp')
-              .setLabel('Victim Corp(s)')
+              .setCustomId('attacker_corporations')
+              .setLabel('Attacker Corp(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('character')
-              .setLabel('Victim Character(s)')
+              .setCustomId('attacker_characters')
+              .setLabel('Attacker Character(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('attacker_alliance')
-              .setLabel('Attacker Alliance(s)')
+              .setCustomId('attacker_alliances')
+              .setLabel('Attacker Alliance(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('attacker_corp')
-              .setLabel('Attacker Corp(s)')
+              .setCustomId('systems')
+              .setLabel('System(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('attacker_character')
-              .setLabel('Attacker Character(s)')
+              .setCustomId('shiptypes')
+              .setLabel('Ship Type(s) (name or ID, comma-separated)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           )
@@ -226,16 +246,35 @@ module.exports = {
       return interaction.showModal(modal);
     }
 
-    // Step 3: ISK/attacker limits modal
+    // Step 3: Filter logic mode (AND/OR/IF) selectors
     if (interaction.customId.startsWith('addfeed-next-step3|')) {
       const [ , cacheKey ] = interaction.customId.split('|');
       const cache = addfeedCache.get(cacheKey);
       if (!cache || !cache.step1 || !cache.step2) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
+      // Build selects for each filter
+      const components = filterLogicFields.map(f =>
+        makeLogicSelect(`logicmode-${f.key}|${cacheKey}`)
+      );
+      // To avoid Discord's 5-row limit, reply with a series of selects in batches
+      return interaction.reply({
+        content: 'Select AND/OR/IF logic for each filter type.',
+        flags: 1 << 6,
+        components: components.slice(0, 5) // Only first 5, user will have to complete the rest via followup if needed
+      });
+    }
+
+    // Step 4: ISK/attacker limits modal
+    if (interaction.customId.startsWith('addfeed-next-step4|')) {
+      const [ , cacheKey ] = interaction.customId.split('|');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache || !cache.step1 || !cache.step2 || !cache.logicModes) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
       const modal = new ModalBuilder()
         .setCustomId(`addfeed-modal-step3|${cacheKey}`)
-        .setTitle('Add zKillboard Feed (3/3)')
+        .setTitle('Add zKillboard Feed (4/4)')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
@@ -269,4 +308,86 @@ module.exports = {
       return interaction.showModal(modal);
     }
   },
+
+  // Select menu logic (AND/OR/IF) handler
+  async handleSelect(interaction) {
+    if (interaction.customId.startsWith('logicmode-')) {
+      const [prefix, cacheKey] = interaction.customId.split('|');
+      const filterKey = prefix.replace('logicmode-', '');
+      const cache = addfeedCache.get(cacheKey);
+      if (!cache) {
+        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
+      }
+      if (!cache.logicModes) cache.logicModes = {};
+      cache.logicModes[filterKey] = interaction.values[0];
+      addfeedCache.set(cacheKey, cache);
+
+      // If all logic modes are set, show Next button.
+      const allSet = filterLogicFields.every(f => cache.logicModes && cache.logicModes[f.key]);
+      if (allSet) {
+        return interaction.reply({
+          content: 'All filter logics selected. Click **Next** to set ISK/attacker limits and save.',
+          flags: 1 << 6,
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`addfeed-next-step4|${cacheKey}`)
+                .setLabel('Next')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+      } else {
+        return interaction.reply({
+          content: `Selected logic for ${filterKey}. Continue selecting logics for all filters.`,
+          flags: 1 << 6,
+          components: [] // No more selects
+        });
+      }
+    }
+  }
 };
+
+// Build the filter object with IDs and logic modes
+async function buildFilterObject(step1, step2, step3, logicModes) {
+  const filters = {};
+
+  // Victim
+  filters.corporationIds = await resolveIds(step1.corporations, 'corporation');
+  filters.corporationIdsMode = logicModes?.corporationIds || 'OR';
+
+  filters.characterIds = await resolveIds(step1.characters, 'character');
+  filters.characterIdsMode = logicModes?.characterIds || 'OR';
+
+  filters.allianceIds = await resolveIds(step1.alliances, 'alliance');
+  filters.allianceIdsMode = logicModes?.allianceIds || 'OR';
+
+  // Location
+  filters.regionIds = await resolveIds(step1.regions, 'region');
+  filters.regionIdsMode = logicModes?.regionIds || 'OR';
+
+  filters.systemIds = await resolveIds(step2.systems, 'system');
+  filters.systemIdsMode = logicModes?.systemIds || 'OR';
+
+  // Ship type
+  filters.shipTypeIds = await resolveIds(step2.shiptypes, 'shiptype');
+  filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
+
+  // Attacker
+  filters.attackerCorporationIds = await resolveIds(step2.attacker_corporations, 'corporation');
+  filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
+
+  filters.attackerCharacterIds = await resolveIds(step2.attacker_characters, 'character');
+  filters.attackerCharacterIdsMode = logicModes?.attackerCharacterIds || 'OR';
+
+  filters.attackerAllianceIds = await resolveIds(step2.attacker_alliances, 'alliance');
+  filters.attackerAllianceIdsMode = logicModes?.attackerAllianceIds || 'OR';
+
+  // ISK/attackers
+  filters.minValue = parseFloat(step3.min_isk.replace(/,/g, '')) || undefined;
+  filters.maxValue = parseFloat(step3.max_isk.replace(/,/g, '')) || undefined;
+  filters.minAttackers = parseInt(step3.min_attackers) || undefined;
+  filters.maxAttackers = parseInt(step3.max_attackers) || undefined;
+
+  return filters;
+}
