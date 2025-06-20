@@ -25,7 +25,7 @@ for (const file of commandFiles) {
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
-  listenToRedisQ('miseryengine', async (killmail) => {
+  listenToRedisQ(async (killmail) => {
     console.log('[BOT] Handling killmail:', killmail.killID || killmail.killmail_id);
     // Get all feeds (channelId, feedName, filters)
     const feeds = getAllFeeds();
