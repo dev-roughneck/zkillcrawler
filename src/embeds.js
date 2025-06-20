@@ -67,15 +67,15 @@ async function formatKillmailEmbed(killmail) {
       }
     )
     .setColor(0xff0000)
-    const timestamp = killmail.killmail_time ? new Date(killmail.killmail_time) : null;
-if (timestamp && !isNaN(timestamp.getTime())) {
-  embed.setTimestamp(timestamp);
-}
-const embed = new EmbedBuilder()
-  .setTitle("title")
-  .setDescription("desc")
-  .setFooter({ text: "zKillboard.com", iconURL: "https://zkillboard.com/img/favicon.png" });
+    .setFooter({ text: "zKillboard.com", iconURL: "https://zkillboard.com/img/favicon.png" });
 
+  // Set timestamp if valid
+  const timestamp = killmail.killmail_time ? new Date(killmail.killmail_time) : null;
+  if (timestamp && !isNaN(timestamp.getTime())) {
+    embed.setTimestamp(timestamp);
+  }
+
+  // Location field
   if (system || region) {
     embed.addFields({
       name: 'Location',
