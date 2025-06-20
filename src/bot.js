@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Partials, Collection, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
@@ -10,7 +10,9 @@ const {
   resolveAlliance,
   resolveShipType,
   resolveSystem,
+  resolveRegion
 } = require('./eveuniverse');
+const { formatKillmailEmbed } = require('./embed');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -35,7 +37,6 @@ client.once('ready', () => {
     try {
       // Log every killmail for debugging
       console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
-
       // --- Name resolution for victim, ship, system, corp, alliance ---
       const victim = killmail.killmail?.victim || {};
       const systemId = killmail.killmail?.solar_system_id;
@@ -53,6 +54,14 @@ client.once('ready', () => {
         systemId ? resolveSystem(systemId) : null,
       ]);
 
+      // Try to resolve region, fallback to system.region_id if available
+      let region = null;
+      if (killmail.killmail?.region_id) {
+        region = await resolveRegion(killmail.killmail.region_id);
+      } else if (system && system.region_id) {
+        region = await resolveRegion(system.region_id);
+      }
+
       // Enrich for filters and output
       const killmailWithNames = {
         ...killmail,
@@ -63,7 +72,7 @@ client.once('ready', () => {
           alliance: victimAlliance?.name,
           ship_type: victimShip?.name,
         },
-        solar_system: system ? { name: system.name } : {},
+        solar_system: system ? { name: system.name, region: region?.name } : {},
         // attackers: to be filled below if needed
       };
 
@@ -106,19 +115,15 @@ client.once('ready', () => {
             });
             if (channel) {
               console.log(`Posting killmail to channel ${channel_id}`);
-              const embed = new EmbedBuilder()
-                .setTitle(`Killmail: ${killmail.killID}`)
-                .setURL(`https://zkillboard.com/kill/${killmail.killID}/`)
-                .setDescription(`New killmail for feed \`${feed_name}\``)
-                .setColor(0xff0000)
-                .addFields(
-                  { name: 'Victim', value: victimChar?.name || 'Unknown', inline: true },
-                  { name: 'Corporation', value: victimCorp?.name || 'Unknown', inline: true },
-                  { name: 'Alliance', value: victimAlliance?.name || 'Unknown', inline: true },
-                  { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
-                  { name: 'System', value: system?.name || 'Unknown', inline: true },
-                  { name: 'ISK Value', value: (killmail.zkb?.totalValue ? killmail.zkb.totalValue.toLocaleString() + ' ISK' : 'Unknown'), inline: true }
-                );
+              const formattedKillmail = {
+                ...killmail.killmail,
+                zkb: killmail.zkb,
+                victim,
+                attackers: killmail.killmail.attackers || [],
+                killID: killmail.killID,
+                region_id: region?.id // pass region for embed formatting
+              };
+              const embed = await formatKillmailEmbed(formattedKillmail);
               await channel.send({ embeds: [embed] });
               console.log("Posted embed to Discord.");
             } else {
