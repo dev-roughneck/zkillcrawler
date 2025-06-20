@@ -35,8 +35,9 @@ client.once('ready', () => {
   // Start single RedisQ poller for all feeds
   listenToRedisQ(async (killmail) => {
     try {
-      // Log every killmail for debugging
-      console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
+      // Only log that a killmail was received (no full payload)
+      console.log("Receiving a new killmail from RedisQ...");
+
       // --- Name resolution for victim, ship, system, corp, alliance ---
       const victim = killmail.killmail?.victim || {};
       const systemId = killmail.killmail?.solar_system_id;
