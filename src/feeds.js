@@ -19,7 +19,7 @@ db.prepare(`
 `).run();
 
 /**
- * Validate the filters object for supported structure.
+ * Validate the filters object for supported structure, including AND/OR/IF logic modes.
  * @param {Object} filters
  * @returns {Object} - A cleaned, valid filters object.
  */
@@ -27,19 +27,43 @@ function validateFilters(filters) {
   const valid = {};
   if (!filters || typeof filters !== 'object') return valid;
 
-  if (Array.isArray(filters.corporationIds)) {
-    valid.corporationIds = filters.corporationIds.filter(id => typeof id === 'number');
-  }
-  if (Array.isArray(filters.characterIds)) {
-    valid.characterIds = filters.characterIds.filter(id => typeof id === 'number');
-  }
+  // Array of numbers for IDs, and string for logic (mode)
+  [
+    'corporationIds',
+    'characterIds',
+    'allianceIds',
+    'attackerCorporationIds',
+    'attackerCharacterIds',
+    'attackerAllianceIds',
+    'regionIds',
+    'systemIds',
+    'shipTypeIds'
+  ].forEach(key => {
+    if (Array.isArray(filters[key])) {
+      valid[key] = filters[key].filter(id => typeof id === 'number');
+    }
+    const modeKey = `${key}Mode`;
+    if (typeof filters[modeKey] === 'string' && ['AND', 'OR', 'IF'].includes(filters[modeKey])) {
+      valid[modeKey] = filters[modeKey];
+    }
+  });
+
   if (typeof filters.minValue === 'number' && !isNaN(filters.minValue)) {
     valid.minValue = filters.minValue;
   }
+  if (typeof filters.maxValue === 'number' && !isNaN(filters.maxValue)) {
+    valid.maxValue = filters.maxValue;
+  }
+  if (typeof filters.minAttackers === 'number' && !isNaN(filters.minAttackers)) {
+    valid.minAttackers = filters.minAttackers;
+  }
+  if (typeof filters.maxAttackers === 'number' && !isNaN(filters.maxAttackers)) {
+    valid.maxAttackers = filters.maxAttackers;
+  }
+  // For compatibility if any old feeds had a string list for regions
   if (Array.isArray(filters.regions)) {
     valid.regions = filters.regions.filter(s => typeof s === 'string');
   }
-  // Add more filter validations as needed
 
   return valid;
 }
