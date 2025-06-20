@@ -1,4 +1,3 @@
-// src/eveuniverse.js
 // EVE Universe Entity Resolver with logging, retries, and basic in-memory cache
 
 let fetchFn;
@@ -235,6 +234,36 @@ async function resolveShipType(input) {
   }
 }
 
+// --- Bulk Resolve Helper ---
+// This is the only addition, non-breaking for your codebase.
+// Returns array of IDs for a comma-separated input (names and/or IDs)
+async function resolveIds(input, type) {
+  if (!input) return [];
+  const entries = input.split(',').map(s => s.trim()).filter(Boolean);
+  const ids = [];
+  for (const entry of entries) {
+    let obj = null;
+    switch (type) {
+      case 'corporation':
+        obj = await resolveCorporation(entry); break;
+      case 'character':
+        obj = await resolveCharacter(entry); break;
+      case 'alliance':
+        obj = await resolveAlliance(entry); break;
+      case 'region':
+        obj = await resolveRegion(entry); break;
+      case 'system':
+        obj = await resolveSystem(entry); break;
+      case 'shiptype':
+        obj = await resolveShipType(entry); break;
+      default:
+        obj = null;
+    }
+    if (obj && obj.id) ids.push(obj.id);
+  }
+  return ids;
+}
+
 module.exports = {
   resolveAlliance,
   resolveCorporation,
@@ -242,4 +271,5 @@ module.exports = {
   resolveRegion,
   resolveSystem,
   resolveShipType,
+  resolveIds, // <-- added
 };
