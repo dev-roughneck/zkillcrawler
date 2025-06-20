@@ -25,7 +25,7 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
   let firstKillmailLogged = false;
-  listenToRedisQ('miseryengine', async (killmail) => {
+  listenToRedisQ(async (killmail) => {
     if (!firstKillmailLogged) {
       console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
       firstKillmailLogged = true;
