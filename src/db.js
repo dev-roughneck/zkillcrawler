@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   UNIQUE(channel_id, feed_name)
 );
 `);
+
 // Eve Universe persistent cache
 db.exec(`
 CREATE TABLE IF NOT EXISTS eve_cache (
