@@ -25,6 +25,7 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
   listenToRedisQ('miseryengine', async (killmail) => {
+    console.log('[BOT] Handling killmail:', killmail.killID);
     // Get all feeds (channelId, feedName, filters)
     const feeds = getAllFeeds();
     for (const { channelId, feedName, filters } of feeds) {
@@ -97,7 +98,7 @@ client.login(process.env.DISCORD_TOKEN);
 
 // --- Helper: filter logic ---
 function applyFilters(killmail, filters) {
-  // Implement your full filtering logic here.
+  // Implement your filter logic here.
   // For demo, always return true. Replace with your own field checks!
   return true;
 }
