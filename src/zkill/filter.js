@@ -1,6 +1,6 @@
 /**
  * Determines if a killmail matches the given filters.
- * The filter object uses normalized fields (arrays for IDs, numbers for minisk/minattackers/maxattackers).
+ * The filter object uses normalized fields (arrays for IDs, numbers for minValue/minAttackers/maxAttackers, etc).
  *
  * @param {Object} killmail - The killmail object from RedisQ/zkillboard.
  * @param {Object} filters - The normalized filters object.
@@ -23,41 +23,43 @@ function filterKillmail(killmail, filters) {
     return arr.includes(val);
   }
 
-  // Region/system/shiptype filters (victim)
-  if (!matchId(killmail.region_id, filters.region_id)) return false;
-  if (!matchId(killmail.solar_system_id, filters.system_id)) return false;
-  if (!matchId(victim.ship_type_id, filters.shiptype_id)) return false;
+  // Victim filters
+  if (filters.regionIds && !matchId(killmail.region_id, filters.regionIds)) return false;
+  if (filters.systemIds && !matchId(killmail.solar_system_id, filters.systemIds)) return false;
+  if (filters.shipTypeIds && !matchId(victim.ship_type_id, filters.shipTypeIds)) return false;
 
-  // Alliance/corp/char filters (victim)
-  if (!matchId(victim.alliance_id, filters.alliance_id)) return false;
-  if (!matchId(victim.corporation_id, filters.corp_id)) return false;
-  if (!matchId(victim.character_id, filters.character_id)) return false;
+  if (filters.allianceIds && !matchId(victim.alliance_id, filters.allianceIds)) return false;
+  if (filters.corporationIds && !matchId(victim.corporation_id, filters.corporationIds)) return false;
+  if (filters.characterIds && !matchId(victim.character_id, filters.characterIds)) return false;
 
-  // Attacker alliance/corp/char/shiptype filters (on any attacker)
-  if (filters.attacker_alliance_id && filters.attacker_alliance_id.length > 0) {
-    if (!attackers.some(a => matchId(a.alliance_id, filters.attacker_alliance_id))) return false;
+  // Attacker filters (at least one attacker must match if filter set)
+  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
+    if (!attackers.some(a => matchId(a.alliance_id, filters.attackerAllianceIds))) return false;
   }
-  if (filters.attacker_corp_id && filters.attacker_corp_id.length > 0) {
-    if (!attackers.some(a => matchId(a.corporation_id, filters.attacker_corp_id))) return false;
+  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
+    if (!attackers.some(a => matchId(a.corporation_id, filters.attackerCorporationIds))) return false;
   }
-  if (filters.attacker_character_id && filters.attacker_character_id.length > 0) {
-    if (!attackers.some(a => matchId(a.character_id, filters.attacker_character_id))) return false;
+  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
+    if (!attackers.some(a => matchId(a.character_id, filters.attackerCharacterIds))) return false;
   }
-  if (filters.attacker_shiptype_id && filters.attacker_shiptype_id.length > 0) {
-    if (!attackers.some(a => matchId(a.ship_type_id, filters.attacker_shiptype_id))) return false;
-  }
-
-  // minisk (minimum ISK value)
-  if (typeof filters.minisk === 'number' && zkb.totalValue !== undefined) {
-    if (zkb.totalValue < filters.minisk) return false;
+  if (filters.attackerShipTypeIds && filters.attackerShipTypeIds.length > 0) {
+    if (!attackers.some(a => matchId(a.ship_type_id, filters.attackerShipTypeIds))) return false;
   }
 
-  // minattackers / maxattackers (number of attackers)
-  if (typeof filters.minattackers === 'number') {
-    if (attackers.length < filters.minattackers) return false;
+  // ISK value filters
+  if (typeof filters.minValue === 'number' && zkb.totalValue !== undefined) {
+    if (zkb.totalValue < filters.minValue) return false;
   }
-  if (typeof filters.maxattackers === 'number') {
-    if (attackers.length > filters.maxattackers) return false;
+  if (typeof filters.maxValue === 'number' && zkb.totalValue !== undefined) {
+    if (zkb.totalValue > filters.maxValue) return false;
+  }
+
+  // Number of attackers
+  if (typeof filters.minAttackers === 'number') {
+    if (attackers.length < filters.minAttackers) return false;
+  }
+  if (typeof filters.maxAttackers === 'number') {
+    if (attackers.length > filters.maxAttackers) return false;
   }
 
   return true;
