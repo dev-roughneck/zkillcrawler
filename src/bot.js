@@ -12,7 +12,7 @@ const {
   resolveSystem,
   resolveRegion
 } = require('./eveuniverse');
-const { formatKillmailEmbed } = require('./embed');
+const { formatKillmailEmbed } = require('./embeds');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
