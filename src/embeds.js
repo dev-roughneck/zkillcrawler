@@ -1,36 +1,89 @@
 const { EmbedBuilder } = require('discord.js');
 const eveu = require('./eveuniverse');
 
-async function formatKillmailEmbed(killmail) {
-  // Look up names using cache or API
-  const [system, region, ship, alliance, corp] = await Promise.all([
-    killmail.solar_system_id ? eveu.resolveSystem(killmail.solar_system_id) : undefined,
-    killmail.region_id ? eveu.resolveRegion(killmail.region_id) : undefined,
-    killmail.victim?.ship_type_id ? eveu.resolveShipType(killmail.victim.ship_type_id) : undefined,
-    killmail.victim?.alliance_id ? eveu.resolveAlliance(killmail.victim.alliance_id) : undefined,
-    killmail.victim?.corporation_id ? eveu.resolveCorporation(killmail.victim.corporation_id) : undefined,
-  ]);
+/**
+ * Attempts to resolve an entity (character, corp, alliance, system, etc.) by ID or name.
+ * Falls back to reverse search if direct resolution fails.
+ */
+async function resolveEntity(type, idOrName) {
+  if (!idOrName) return undefined;
+  try {
+    // Try resolving by ID first
+    switch (type) {
+      case 'character':
+        return await eveu.resolveCharacter(idOrName);
+      case 'corporation':
+        return await eveu.resolveCorporation(idOrName);
+      case 'alliance':
+        return await eveu.resolveAlliance(idOrName);
+      case 'system':
+        return await eveu.resolveSystem(idOrName);
+      case 'region':
+        return await eveu.resolveRegion(idOrName);
+      case 'shiptype':
+        return await eveu.resolveShipType(idOrName);
+      default:
+        return undefined;
+    }
+  } catch {
+    // Fallback: attempt reverse search by name if possible
+    try {
+      switch (type) {
+        case 'character':
+          return await eveu.reverseCharacter(idOrName);
+        case 'corporation':
+          return await eveu.reverseCorporation(idOrName);
+        case 'alliance':
+          return await eveu.reverseAlliance(idOrName);
+        case 'system':
+          return await eveu.reverseSystem(idOrName);
+        case 'region':
+          return await eveu.reverseRegion(idOrName);
+        case 'shiptype':
+          return await eveu.reverseShipType(idOrName);
+        default:
+          return undefined;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+}
 
+/**
+ * Formats a killmail as a Discord Embed with maximum resolution.
+ */
+async function formatKillmailEmbed(killmail) {
+  // Resolve victim details
   const victim = killmail.victim || {};
   const zkb = killmail.zkb || {};
   const attackers = killmail.attackers || [];
   const finalBlow = attackers.find(a => a.final_blow) || {};
-  const finalBlowAlliance = finalBlow.alliance_id ? await eveu.resolveAlliance(finalBlow.alliance_id) : undefined;
-  const finalBlowCorp = finalBlow.corporation_id ? await eveu.resolveCorporation(finalBlow.corporation_id) : undefined;
 
-  // Victim details
+  // Resolve as much as possible (with fallbacks)
+  const [system, region, ship, alliance, corp] = await Promise.all([
+    resolveEntity('system', killmail.solar_system_id),
+    resolveEntity('region', killmail.region_id),
+    resolveEntity('shiptype', victim.ship_type_id),
+    resolveEntity('alliance', victim.alliance_id),
+    resolveEntity('corporation', victim.corporation_id)
+  ]);
+
   const victimPilot = victim.character_id
-    ? await eveu.resolveCharacter(victim.character_id).then(c => c?.name).catch(() => undefined)
+    ? (await resolveEntity('character', victim.character_id))?.name
     : undefined;
   const victimCorp = corp ? corp.name : 'Unknown Corp';
   const victimAlliance = alliance ? alliance.name : 'None';
 
-  // Final blow details
   const finalBlowPilot = finalBlow.character_id
-    ? await eveu.resolveCharacter(finalBlow.character_id).then(c => c?.name).catch(() => undefined)
+    ? (await resolveEntity('character', finalBlow.character_id))?.name
     : undefined;
-  const finalBlowCorpName = finalBlowCorp ? finalBlowCorp.name : (finalBlow.corporation_id || 'Unknown Corp');
-  const finalBlowAllianceName = finalBlowAlliance ? finalBlowAlliance.name : (finalBlow.alliance_id ? finalBlow.alliance_id : 'None');
+  const finalBlowCorp = finalBlow.corporation_id
+    ? await resolveEntity('corporation', finalBlow.corporation_id)
+    : undefined;
+  const finalBlowAlliance = finalBlow.alliance_id
+    ? await resolveEntity('alliance', finalBlow.alliance_id)
+    : undefined;
 
   // ISK Value
   const iskValue = zkb.totalValue ? `${Math.round(zkb.totalValue).toLocaleString()} ISK` : 'Unknown';
@@ -60,8 +113,8 @@ async function formatKillmailEmbed(killmail) {
         name: 'Final Blow',
         value: [
           finalBlowPilot || 'Unknown',
-          `**Corp:** ${finalBlowCorpName}`,
-          `**Alliance:** ${finalBlowAllianceName}`
+          `**Corp:** ${finalBlowCorp ? finalBlowCorp.name : (finalBlow.corporation_id || 'Unknown Corp')}`,
+          `**Alliance:** ${finalBlowAlliance ? finalBlowAlliance.name : (finalBlow.alliance_id || 'None')}`
         ].join('\n'),
         inline: false
       }
