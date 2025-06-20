@@ -67,7 +67,10 @@ async function formatKillmailEmbed(killmail) {
       }
     )
     .setColor(0xff0000)
-    .setTimestamp(new Date(killmail.killmail_time))
+    const timestamp = killmail.killmail_time ? new Date(killmail.killmail_time) : null;
+if (timestamp && !isNaN(timestamp.getTime())) {
+  embed.setTimestamp(timestamp);
+}
     .setFooter({ text: 'zKillboard.com', iconURL: 'https://zkillboard.com/img/favicon.png' });
 
   if (system || region) {
