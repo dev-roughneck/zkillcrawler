@@ -27,11 +27,11 @@ const filterLogicFields = [
   { key: 'shipTypeIds', label: 'Ship Type(s)' }
 ];
 
-function makeLogicSelect(customId, defaultValue = 'OR') {
+function makeLogicSelect(customId, label, defaultValue = 'OR') {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(customId)
-      .setPlaceholder('Logic (default: OR)')
+      .setPlaceholder(`${label} logic (default: OR)`)
       .setMinValues(1)
       .setMaxValues(1)
       .addOptions([
@@ -64,7 +64,7 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('corporations')
-              .setLabel('Victim Corp(s) (name or ID, comma-separated)')
+              .setLabel('Victim Corp(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
@@ -85,7 +85,7 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('regions')
-              .setLabel('Region(s) (name or ID, comma-separated)')
+              .setLabel('Region(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           )
@@ -203,6 +203,7 @@ module.exports = {
       if (!cache || !cache.step1) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
+
       const modal = new ModalBuilder()
         .setCustomId(`addfeed-modal-step2|${cacheKey}`)
         .setTitle('Add zKillboard Feed (2/4)')
@@ -231,14 +232,14 @@ module.exports = {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('systems')
-              .setLabel('System(s) (name or ID, comma-separated)')
+              .setLabel('System(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('shiptypes')
-              .setLabel('Ship Type(s) (name or ID, comma-separated)')
+              .setLabel('Ship Type(s) (name or ID, comma-sep)')
               .setStyle(TextInputStyle.Short)
               .setRequired(false)
           )
@@ -253,15 +254,34 @@ module.exports = {
       if (!cache || !cache.step1 || !cache.step2) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
-      // Build selects for each filter
+
+      // Build selects for each filter with labels as placeholders
       const components = filterLogicFields.map(f =>
-        makeLogicSelect(`logicmode-${f.key}|${cacheKey}`)
+        makeLogicSelect(`logicmode-${f.key}|${cacheKey}`, f.label)
       );
-      // To avoid Discord's 5-row limit, reply with a series of selects in batches
+
+      // Discord allows max 5 components per message, so batch if needed
+      let replyComponents = components.slice(0, 5);
+      let more = components.length > 5;
+
+      // Always add the submit button in a new ActionRow
+      replyComponents.push(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`addfeed-next-step4|${cacheKey}`)
+            .setLabel('Next')
+            .setStyle(ButtonStyle.Primary)
+        )
+      );
+
       return interaction.reply({
-        content: 'Select AND/OR/IF logic for each filter type.',
+        content:
+          'Select AND/OR/IF logic for each filter type below. ' +
+          (more
+            ? 'For more filters, repeat the process after submitting these.'
+            : ''),
         flags: 1 << 6,
-        components: components.slice(0, 5) // Only first 5, user will have to complete the rest via followup if needed
+        components: replyComponents
       });
     }
 
@@ -322,9 +342,10 @@ module.exports = {
       cache.logicModes[filterKey] = interaction.values[0];
       addfeedCache.set(cacheKey, cache);
 
-      // If all logic modes are set, show Next button.
+      // Check if all logic modes are set
       const allSet = filterLogicFields.every(f => cache.logicModes && cache.logicModes[f.key]);
       if (allSet) {
+        // If all are set, enable the "Next" button for user to proceed
         return interaction.reply({
           content: 'All filter logics selected. Click **Next** to set ISK/attacker limits and save.',
           flags: 1 << 6,
@@ -338,6 +359,7 @@ module.exports = {
           ]
         });
       } else {
+        // Otherwise, ask the user to continue selecting
         return interaction.reply({
           content: `Selected logic for ${filterKey}. Continue selecting logics for all filters.`,
           flags: 1 << 6,
