@@ -71,7 +71,10 @@ async function formatKillmailEmbed(killmail) {
 if (timestamp && !isNaN(timestamp.getTime())) {
   embed.setTimestamp(timestamp);
 }
-    .setFooter({ text: 'zKillboard.com', iconURL: 'https://zkillboard.com/img/favicon.png' });
+const embed = new EmbedBuilder()
+  .setTitle("title")
+  .setDescription("desc")
+  .setFooter({ text: "zKillboard.com", iconURL: "https://zkillboard.com/img/favicon.png" });
 
   if (system || region) {
     embed.addFields({
