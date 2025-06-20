@@ -2,9 +2,8 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { listenToRedisQ } = require('./zkill/redisq'); // <-- Must match correct export!
+const { listenToRedisQ } = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
-const { formatKillmailEmbed } = require('./embeds'); // <-- Use your enhanced embed function
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -25,24 +24,28 @@ for (const file of commandFiles) {
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   // Start single RedisQ poller for all feeds
-  listenToRedisQ(async (killmail) => {
-    console.log('[BOT] Handling killmail:', killmail.killID || killmail.killmail_id);
-    // Get all feeds (channelId, feedName, filters)
+  let firstKillmailLogged = false;
+  listenToRedisQ('miseryengine', async (killmail) => {
+    if (!firstKillmailLogged) {
+      console.log("Received killmail payload:", JSON.stringify(killmail, null, 2));
+      firstKillmailLogged = true;
+    }
+    // Get all feeds (channel_id, feed_name, filters)
     const feeds = getAllFeeds();
     for (const { channel_id, feed_name, filters } of feeds) {
-  try {
-    if (applyFilters(killmail, filters)) {
-      const channel = await client.channels.fetch(channel_id).catch(() => null);
-      if (channel) {
-        await channel.send({
-          content: `New killmail for feed \`${feed_name}\`: https://zkillboard.com/kill/${killmail.killID}/`
-        });
+      try {
+        if (applyFilters(killmail, filters)) {
+          const channel = await client.channels.fetch(channel_id).catch(() => null);
+          if (channel) {
+            await channel.send({
+              content: `New killmail for feed \`${feed_name}\`: https://zkillboard.com/kill/${killmail.killID}/`
+            });
+          }
+        }
+      } catch (err) {
+        console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
       }
     }
-  } catch (err) {
-    console.error(`Error posting killmail for feed ${feed_name} in channel ${channel_id}:`, err);
-  }
-}
   });
 });
 
@@ -74,16 +77,11 @@ client.on('interactionCreate', async interaction => {
         await addfeed.handleButton(interaction);
       }
     }
-    // String select menus (stopfeed and addfeed logic)
+    // String select menus (stopfeed)
     else if (interaction.isStringSelectMenu()) {
       if (interaction.customId === 'stopfeed-select') {
         const stopfeed = require('./commands/stopfeed');
         await stopfeed.handleSelect(interaction);
-      }
-      // Addfeed select logic (AND/OR/IF for advanced filtering)
-      else if (interaction.customId.startsWith('logicmode-')) {
-        const addfeed = require('./commands/addfeed');
-        await addfeed.handleSelect(interaction);
       }
     }
   } catch (err) {
@@ -103,105 +101,114 @@ client.on('interactionCreate', async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 
 // --- Helper: filter logic ---
-function checkFilter(ids, killmailIds, mode = "OR") {
-  if (!ids || ids.length === 0) return true;
-  if (!killmailIds || killmailIds.length === 0) return false;
-  if (mode === "AND") return ids.every(id => killmailIds.includes(id));
-  if (mode === "OR") return ids.some(id => killmailIds.includes(id));
-  if (mode === "IF") return ids.length === 0 || ids.some(id => killmailIds.includes(id));
-  return true;
-}
-
 function applyFilters(killmail, filters) {
-  // If no filters, allow everything
+  // If no filters, always match
   if (!filters || Object.keys(filters).length === 0) return true;
 
-  // Corporation filter
-  if (filters.corporationIds && filters.corporationIds.length > 0) {
-    const involvedCorpIds = [
-      killmail.victim?.corporation_id,
-      ...(killmail.attackers?.map(a => a.corporation_id) ?? [])
-    ].filter(Boolean);
-    if (!checkFilter(filters.corporationIds, involvedCorpIds, filters.corporationIdsMode || "OR")) return false;
+  // Helper for multi-value comma-separated string to array
+  function toArray(str) {
+    if (!str) return [];
+    return str.split(',').map(s => s.trim()).filter(Boolean);
   }
 
-  // Character filter
-  if (filters.characterIds && filters.characterIds.length > 0) {
-    const involvedCharIds = [
-      killmail.victim?.character_id,
-      ...(killmail.attackers?.map(a => a.character_id) ?? [])
-    ].filter(Boolean);
-    if (!checkFilter(filters.characterIds, involvedCharIds, filters.characterIdsMode || "OR")) return false;
+  // Each filter: if set, must match
+  // Adjust killmail property paths to match your payload!
+
+  // Region
+  if (filters.region) {
+    const allowedRegions = toArray(filters.region).map(x => x.toLowerCase());
+    if (!allowedRegions.includes((killmail.solar_system?.region?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // Alliance filter
-  if (filters.allianceIds && filters.allianceIds.length > 0) {
-    const involvedAllianceIds = [
-      killmail.victim?.alliance_id,
-      ...(killmail.attackers?.map(a => a.alliance_id) ?? [])
-    ].filter(Boolean);
-    if (!checkFilter(filters.allianceIds, involvedAllianceIds, filters.allianceIdsMode || "OR")) return false;
+  // System
+  if (filters.system) {
+    const allowedSystems = toArray(filters.system).map(x => x.toLowerCase());
+    if (!allowedSystems.includes((killmail.solar_system?.name?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // Attacker Corporation filter
-  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
-    const attackerCorpIds = (killmail.attackers ?? []).map(a => a.corporation_id).filter(Boolean);
-    if (!checkFilter(filters.attackerCorporationIds, attackerCorpIds, filters.attackerCorporationIdsMode || "OR")) return false;
+  // Ship Type
+  if (filters.shiptype) {
+    const allowedShips = toArray(filters.shiptype).map(x => x.toLowerCase());
+    if (!allowedShips.includes((killmail.victim?.ship_type?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // Attacker Character filter
-  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
-    const attackerCharIds = (killmail.attackers ?? []).map(a => a.character_id).filter(Boolean);
-    if (!checkFilter(filters.attackerCharacterIds, attackerCharIds, filters.attackerCharacterIdsMode || "OR")) return false;
+  // Victim Alliance
+  if (filters.alliance) {
+    const allowedAlliances = toArray(filters.alliance).map(x => x.toLowerCase());
+    if (!allowedAlliances.includes((killmail.victim?.alliance?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // Attacker Alliance filter
-  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
-    const attackerAllianceIds = (killmail.attackers ?? []).map(a => a.alliance_id).filter(Boolean);
-    if (!checkFilter(filters.attackerAllianceIds, attackerAllianceIds, filters.attackerAllianceIdsMode || "OR")) return false;
+  // Victim Corp
+  if (filters.corp) {
+    const allowedCorps = toArray(filters.corp).map(x => x.toLowerCase());
+    if (!allowedCorps.includes((killmail.victim?.corporation?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // Region filter (by regionId, not region_name)
-  if (filters.regionIds && filters.regionIds.length > 0) {
-    const regionId = killmail.region_id || null;
-    if (!checkFilter(filters.regionIds, [regionId].filter(Boolean), filters.regionIdsMode || "OR")) return false;
+  // Victim Character
+  if (filters.character) {
+    const allowedChars = toArray(filters.character).map(x => x.toLowerCase());
+    if (!allowedChars.includes((killmail.victim?.character?.toLowerCase()) || '')) {
+      return false;
+    }
   }
 
-  // System filter
-  if (filters.systemIds && filters.systemIds.length > 0) {
-    const systemId = killmail.solar_system_id || null;
-    if (!checkFilter(filters.systemIds, [systemId].filter(Boolean), filters.systemIdsMode || "OR")) return false;
+  // Attacker Alliance
+  if (filters.attacker_alliance) {
+    const allowedAA = toArray(filters.attacker_alliance).map(x => x.toLowerCase());
+    const attackersMatch = (killmail.attackers || []).some(a =>
+      a.alliance && allowedAA.includes(a.alliance.toLowerCase())
+    );
+    if (!attackersMatch) return false;
   }
 
-  // Ship Type filter
-  if (filters.shipTypeIds && filters.shipTypeIds.length > 0) {
-    const shipTypeId = killmail.victim?.ship_type_id || null;
-    if (!checkFilter(filters.shipTypeIds, [shipTypeId].filter(Boolean), filters.shipTypeIdsMode || "OR")) return false;
+  // Attacker Corp
+  if (filters.attacker_corp) {
+    const allowedAC = toArray(filters.attacker_corp).map(x => x.toLowerCase());
+    const attackersMatch = (killmail.attackers || []).some(a =>
+      a.corporation && allowedAC.includes(a.corporation.toLowerCase())
+    );
+    if (!attackersMatch) return false;
   }
 
-  // Minimum ISK value filter
-  if (filters.minValue && killmail.zkb?.totalValue) {
-    if (killmail.zkb.totalValue < filters.minValue) return false;
-  }
-  // Maximum ISK value filter
-  if (filters.maxValue && killmail.zkb?.totalValue) {
-    if (killmail.zkb.totalValue > filters.maxValue) return false;
-  }
-
-  // Minimum attackers filter
-  if (filters.minAttackers && Array.isArray(killmail.attackers)) {
-    if (killmail.attackers.length < filters.minAttackers) return false;
-  }
-  // Maximum attackers filter
-  if (filters.maxAttackers && Array.isArray(killmail.attackers)) {
-    if (killmail.attackers.length > filters.maxAttackers) return false;
+  // Attacker Character
+  if (filters.attacker_character) {
+    const allowedAChar = toArray(filters.attacker_character).map(x => x.toLowerCase());
+    const attackersMatch = (killmail.attackers || []).some(a =>
+      a.character && allowedAChar.includes(a.character.toLowerCase())
+    );
+    if (!attackersMatch) return false;
   }
 
-  // Backward compatibility: regions as string array (region_name)
-  if (filters.regions && Array.isArray(filters.regions) && filters.regions.length > 0 && killmail.region_name) {
-    if (!filters.regions.includes(killmail.region_name)) return false;
+  // ISK value minimum/maximum
+  if (filters.min_isk) {
+    const minVal = parseFloat(filters.min_isk.replace(/,/g, ''));
+    if (!isNaN(minVal) && (killmail.zkb?.totalValue || 0) < minVal) return false;
+  }
+  if (filters.max_isk) {
+    const maxVal = parseFloat(filters.max_isk.replace(/,/g, ''));
+    if (!isNaN(maxVal) && (killmail.zkb?.totalValue || 0) > maxVal) return false;
   }
 
-  // If all filters passed
+  // Minimum/maximum attackers
+  if (filters.min_attackers) {
+    const minAtk = parseInt(filters.min_attackers);
+    if (!isNaN(minAtk) && (killmail.attackers?.length || 0) < minAtk) return false;
+  }
+  if (filters.max_attackers) {
+    const maxAtk = parseInt(filters.max_attackers);
+    if (!isNaN(maxAtk) && (killmail.attackers?.length || 0) > maxAtk) return false;
+  }
+
+  // If passed all filters: MATCH
   return true;
 }
