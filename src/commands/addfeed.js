@@ -9,11 +9,10 @@ const {
   StringSelectMenuBuilder
 } = require('discord.js');
 const { setFeed, feedExists } = require('../feeds');
-const { resolveIds } = require('../eveuniverse'); // Helper to resolve names to IDs
+const { resolveIds } = require('../eveuniverse');
 
 const SESSION_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 
-// Full list of possible logic fields, with step and modal key mapping
 const filterLogicFieldsMaster = [
   { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations', step: 1 },
   { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters', step: 1 },
@@ -26,7 +25,6 @@ const filterLogicFieldsMaster = [
   { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes', step: 2 }
 ];
 
-// In-memory cache for multi-step modal data
 const addfeedCache = new Map();
 
 function makeLogicSelect(customId, label, defaultValue = 'OR') {
@@ -55,7 +53,6 @@ module.exports = {
     .setDescription('Add a new zKillboard feed to this channel, with advanced filters.'),
 
   async execute(interaction) {
-    // STEP 1: Feed Name + Victim/Location Filters
     try {
       const modal = new ModalBuilder()
         .setCustomId('addfeed-modal-step1')
@@ -99,9 +96,8 @@ module.exports = {
         );
       await interaction.showModal(modal);
     } catch (err) {
-      console.error('Error in /addfeed:', err);
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({content: 'Error: Could not show modal', ephemeral: true});
+        try { await interaction.reply({content: 'Error: Could not show modal', ephemeral: true}); } catch {}
       }
     }
   },
@@ -183,7 +179,7 @@ module.exports = {
         addfeedCache.delete(cacheKey);
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
-      if (!cache || !cache.step1 || !cache.step2 /*| !cache.logicModes*/) {
+      if (!cache || !cache.step1 || !cache.step2) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
       const step3 = {
@@ -290,12 +286,10 @@ module.exports = {
         });
       }
 
-      // Store active fields and progress index in cache
       cache.activeLogicFields = logicFields;
       cache.logicProgressIndex = 0;
       addfeedCache.set(cacheKey, cache);
 
-      // Prompt for the first logic select
       const field = logicFields[0];
       return interaction.reply({
         content: `Select logic for **${field.label}**:`,
@@ -308,7 +302,7 @@ module.exports = {
 
     // Step 4: ISK/attacker limits modal
     if (interaction.customId.startsWith('addfeed-next-step4|')) {
-      if (!cache || !cache.step1 || !cache.step2 /*| !cache.logicModes*/) {
+      if (!cache || !cache.step1 || !cache.step2) {
         return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
       }
       const modal = new ModalBuilder()
@@ -362,14 +356,12 @@ module.exports = {
     if (!cache.logicModes) cache.logicModes = {};
     cache.logicModes[filterKey] = interaction.values[0];
 
-    // Advance to next logic field, or show Next button if done
     const logicFields = cache.activeLogicFields || [];
     let idx = (cache.logicProgressIndex || 0) + 1;
     cache.logicProgressIndex = idx;
     addfeedCache.set(cacheKey, cache);
 
     if (idx < logicFields.length) {
-      // Prompt next logic select
       const field = logicFields[idx];
       return interaction.reply({
         content: `Select logic for **${field.label}**:`,
@@ -379,7 +371,6 @@ module.exports = {
         ]
       });
     } else {
-      // All set, show Next button
       return interaction.reply({
         content: 'All filter logics selected. Click **Next** to set ISK/attacker limits and save.',
         flags: 1 << 6,
@@ -396,11 +387,8 @@ module.exports = {
   }
 };
 
-// Build the filter object with IDs and logic modes
 async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields) {
   const filters = {};
-
-  // Victim
   filters.corporationIds = await resolveIds(step1.corporations, 'corporation');
   filters.corporationIdsMode = logicModes?.corporationIds || 'OR';
   filters.characterIds = await resolveIds(step1.characters, 'character');
@@ -410,7 +398,6 @@ async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFie
   filters.regionIds = await resolveIds(step1.regions, 'region');
   filters.regionIdsMode = logicModes?.regionIds || 'OR';
 
-  // Attacker/location
   filters.attackerCorporationIds = await resolveIds(step2.attacker_corporations, 'corporation');
   filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
   filters.attackerCharacterIds = await resolveIds(step2.attacker_characters, 'character');
@@ -422,7 +409,6 @@ async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFie
   filters.shipTypeIds = await resolveIds(step2.shiptypes, 'shiptype');
   filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
 
-  // Only override logic modes for the active fields
   if (Array.isArray(activeLogicFields)) {
     for (const f of activeLogicFields) {
       if (logicModes && logicModes[f.key] !== undefined) {
@@ -431,7 +417,6 @@ async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFie
     }
   }
 
-  // ISK/attackers
   filters.minValue = parseFloat(step3.min_isk.replace(/,/g, '')) || undefined;
   filters.maxValue = parseFloat(step3.max_isk.replace(/,/g, '')) || undefined;
   filters.minAttackers = parseInt(step3.min_attackers) || undefined;
