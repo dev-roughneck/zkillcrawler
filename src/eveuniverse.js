@@ -214,6 +214,13 @@ async function resolveIds(input, type) {
   return ids;
 }
 
+// --- Utility for getting region_id from a system ---
+async function getRegionIdForSystem(systemId) {
+  if (!systemId) return null;
+  const system = await resolveSystem(systemId);
+  return system && system.region_id ? system.region_id : null;
+}
+
 module.exports = {
   resolveAlliance,
   resolveCorporation,
@@ -224,4 +231,5 @@ module.exports = {
   resolveIds,
   idsToNames,
   namesToIds,
+  getRegionIdForSystem
 };
