@@ -1,5 +1,10 @@
 const fetch = require('node-fetch');
 
+/**
+ * Listens to zKillboard RedisQ for killmail events.
+ * @param {string} queueID - The RedisQ queue ID.
+ * @param {function} onKillmail - Callback for received killmail.
+ */
 function listenToRedisQ(queueID, onKillmail) {
   let delay = 1000; // start with 1 second
   const maxDelay = 10 * 60 * 1000; // up to 10 minutes
@@ -13,10 +18,9 @@ function listenToRedisQ(queueID, onKillmail) {
       started = true;
     }
     try {
-      const res = await fetch(`https://redisq.zkillboard.com/listen.php?queueID=${queueID}`);
+      const res = await fetch(`https://zkillredisq.stream/listen.php?queueID=${queueID}`);
       if (!res.ok) throw new Error(`RedisQ HTTP error: ${res.status}`);
       const data = await res.json();
-      // Handles both killID (legacy) and killmail_id (ESI)
       if (data && data.package && (data.package.killID || data.package.killmail_id)) {
         console.log(`[REDISQ] Received killmail: ${data.package.killID || data.package.killmail_id}`);
         onKillmail(data.package);
