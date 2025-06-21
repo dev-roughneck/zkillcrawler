@@ -64,6 +64,23 @@ function validateFilters(filters) {
     valid.regions = filters.regions.filter(s => typeof s === 'string');
   }
 
+  // ---- ADDED: securityClass, distanceFromSystemId, maxDistanceLy ----
+  if (
+    Array.isArray(filters.securityClass) &&
+    filters.securityClass.every(x =>
+      typeof x === "string" && ["highsec", "lowsec", "nullsec", "wh"].includes(x.toLowerCase())
+    )
+  ) {
+    valid.securityClass = filters.securityClass.map(x => x.toLowerCase());
+  }
+  if (typeof filters.distanceFromSystemId === 'number' && !isNaN(filters.distanceFromSystemId)) {
+    valid.distanceFromSystemId = filters.distanceFromSystemId;
+  }
+  if (typeof filters.maxDistanceLy === 'number' && !isNaN(filters.maxDistanceLy)) {
+    valid.maxDistanceLy = filters.maxDistanceLy;
+  }
+  // ------------------------------------------------------
+
   return valid;
 }
 
