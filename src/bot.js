@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
-const { filterKillmail } = require('./zkill/filters');
+const { filterKillmail } = require('./zkill/filter');
 const {
   resolveCharacter,
   resolveCorporation,
