@@ -16,10 +16,12 @@ db.prepare(`
   )
 `).run();
 
+// Only strictly match fields that are present and non-empty/undefined/NaN
 function validateFilters(filters) {
   const valid = {};
   if (!filters || typeof filters !== 'object') return valid;
 
+  // List the allowed fields and types
   [
     'corporationIds',
     'characterIds',
@@ -29,15 +31,10 @@ function validateFilters(filters) {
     'attackerAllianceIds',
     'regionIds',
     'systemIds',
-    'shipTypeIds',
-    'attackerShipTypeIds'
+    'shipTypeIds'
   ].forEach(key => {
     if (Array.isArray(filters[key]) && filters[key].length > 0) {
       valid[key] = filters[key].filter(id => typeof id === 'number');
-    }
-    const modeKey = `${key}Mode`;
-    if (typeof filters[modeKey] === 'string' && ['AND', 'OR', 'IF'].includes(filters[modeKey])) {
-      valid[modeKey] = filters[modeKey];
     }
   });
 
@@ -52,9 +49,6 @@ function validateFilters(filters) {
   }
   if (typeof filters.maxAttackers === 'number' && !isNaN(filters.maxAttackers)) {
     valid.maxAttackers = filters.maxAttackers;
-  }
-  if (Array.isArray(filters.regions) && filters.regions.length > 0) {
-    valid.regions = filters.regions.filter(s => typeof s === 'string');
   }
   if (
     Array.isArray(filters.securityClass) &&
