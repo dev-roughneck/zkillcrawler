@@ -2,14 +2,14 @@ const { calculateLyDistance } = require('../eveuniverse');
 
 /**
  * Filter a normalized killmail according to filters.
+ * Only non-empty filter fields are applied.
  * @param {Object} killmail
  * @param {Object} filters
  * @returns {Promise<boolean>}
  */
 async function filterKillmail(killmail, filters) {
-  // Helper for matching arrays of IDs (OR/AND/IF)
   function matchIds(arr, target, mode = 'OR') {
-    if (!arr || arr.length === 0) return true; // No filter set, always match
+    if (!arr || arr.length === 0) return true; // Ignore blank filters
     if (!target) return false;
     if (Array.isArray(target)) {
       if (mode === 'AND') return arr.every(id => target.includes(id));
@@ -24,54 +24,40 @@ async function filterKillmail(killmail, filters) {
     }
   }
 
-  // Victim-side filters
-  if (Array.isArray(filters.corporationIds) && filters.corporationIds.length > 0) {
-    if (!matchIds(filters.corporationIds, killmail.victim.corporation_id, filters.corporationIdsMode)) return false;
-  }
-  if (Array.isArray(filters.characterIds) && filters.characterIds.length > 0) {
-    if (!matchIds(filters.characterIds, killmail.victim.character_id, filters.characterIdsMode)) return false;
-  }
-  if (Array.isArray(filters.allianceIds) && filters.allianceIds.length > 0) {
-    if (!matchIds(filters.allianceIds, killmail.victim.alliance_id, filters.allianceIdsMode)) return false;
-  }
-  if (Array.isArray(filters.regionIds) && filters.regionIds.length > 0) {
-    if (!matchIds(filters.regionIds, killmail.region_id, filters.regionIdsMode)) return false;
-  }
-  if (Array.isArray(filters.systemIds) && filters.systemIds.length > 0) {
-    if (!matchIds(filters.systemIds, killmail.solar_system_id, filters.systemIdsMode)) return false;
-  }
-  if (Array.isArray(filters.shipTypeIds) && filters.shipTypeIds.length > 0) {
-    if (!matchIds(filters.shipTypeIds, killmail.victim.ship_type_id, filters.shipTypeIdsMode)) return false;
-  }
+  // Only apply filters if the array is non-empty
+  if (filters.corporationIds?.length > 0 &&
+      !matchIds(filters.corporationIds, killmail.victim.corporation_id, filters.corporationIdsMode)) return false;
+  if (filters.characterIds?.length > 0 &&
+      !matchIds(filters.characterIds, killmail.victim.character_id, filters.characterIdsMode)) return false;
+  if (filters.allianceIds?.length > 0 &&
+      !matchIds(filters.allianceIds, killmail.victim.alliance_id, filters.allianceIdsMode)) return false;
+  if (filters.regionIds?.length > 0 &&
+      !matchIds(filters.regionIds, killmail.region_id, filters.regionIdsMode)) return false;
+  if (filters.systemIds?.length > 0 &&
+      !matchIds(filters.systemIds, killmail.solar_system_id, filters.systemIdsMode)) return false;
+  if (filters.shipTypeIds?.length > 0 &&
+      !matchIds(filters.shipTypeIds, killmail.victim.ship_type_id, filters.shipTypeIdsMode)) return false;
 
   // Attacker-side filters (arrays of attackers)
   const attackers = killmail.attackers || [];
-  if (Array.isArray(filters.attackerCorporationIds) && filters.attackerCorporationIds.length > 0) {
+  if (filters.attackerCorporationIds?.length > 0) {
     const attackerCorpIds = attackers.map(a => a.corporation_id).filter(Boolean);
     if (!matchIds(filters.attackerCorporationIds, attackerCorpIds, filters.attackerCorporationIdsMode)) return false;
   }
-  if (Array.isArray(filters.attackerCharacterIds) && filters.attackerCharacterIds.length > 0) {
+  if (filters.attackerCharacterIds?.length > 0) {
     const attackerCharIds = attackers.map(a => a.character_id).filter(Boolean);
     if (!matchIds(filters.attackerCharacterIds, attackerCharIds, filters.attackerCharacterIdsMode)) return false;
   }
-  if (Array.isArray(filters.attackerAllianceIds) && filters.attackerAllianceIds.length > 0) {
+  if (filters.attackerAllianceIds?.length > 0) {
     const attackerAllianceIds = attackers.map(a => a.alliance_id).filter(Boolean);
     if (!matchIds(filters.attackerAllianceIds, attackerAllianceIds, filters.attackerAllianceIdsMode)) return false;
   }
 
-  // ISK value/attacker count filters
-  if (typeof filters.minValue === 'number') {
-    if (!killmail.zkb?.totalValue || killmail.zkb.totalValue < filters.minValue) return false;
-  }
-  if (typeof filters.maxValue === 'number') {
-    if (!killmail.zkb?.totalValue || killmail.zkb.totalValue > filters.maxValue) return false;
-  }
-  if (typeof filters.minAttackers === 'number') {
-    if (attackers.length < filters.minAttackers) return false;
-  }
-  if (typeof filters.maxAttackers === 'number') {
-    if (attackers.length > filters.maxAttackers) return false;
-  }
+  // ISK value/attacker count filters (only if defined)
+  if (typeof filters.minValue === 'number' && killmail.zkb?.totalValue < filters.minValue) return false;
+  if (typeof filters.maxValue === 'number' && killmail.zkb?.totalValue > filters.maxValue) return false;
+  if (typeof filters.minAttackers === 'number' && attackers.length < filters.minAttackers) return false;
+  if (typeof filters.maxAttackers === 'number' && attackers.length > filters.maxAttackers) return false;
 
   // Security class filter
   if (Array.isArray(filters.securityClass) && filters.securityClass.length > 0) {
@@ -91,9 +77,7 @@ async function filterKillmail(killmail, filters) {
   // Lightyear distance filter
   if (
     typeof filters.distanceFromSystemId === 'number' &&
-    typeof filters.maxDistanceLy === 'number' &&
-    !isNaN(filters.distanceFromSystemId) &&
-    !isNaN(filters.maxDistanceLy)
+    typeof filters.maxDistanceLy === 'number'
   ) {
     try {
       const dist = await calculateLyDistance(filters.distanceFromSystemId, killmail.solar_system_id);
