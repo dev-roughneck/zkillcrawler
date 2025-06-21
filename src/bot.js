@@ -1,4 +1,35 @@
-// ... [rest of your setup code remains unchanged]
+require('dotenv').config();
+const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const { listenToRedisQ } = require('./zkill/redisq');
+const { getAllFeeds } = require('./feeds');
+const {
+  resolveCharacter,
+  resolveCorporation,
+  resolveAlliance,
+  resolveShipType,
+  resolveSystem,
+  resolveRegion
+} = require('./eveuniverse');
+const { formatKillmailEmbed } = require('./embeds');
+const { filterKillmail } = require('./zkill/filter');
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  partials: [Partials.Channel]
+});
+
+// Load commands dynamically from src/commands/
+client.commands = new Collection();
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+for (const file of commandFiles) {
+  const command = require(path.join(commandsPath, file));
+  if (command.data && command.execute) {
+    client.commands.set(command.data.name, command);
+  }
+}
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
@@ -88,4 +119,53 @@ client.once('ready', () => {
   });
 });
 
-// ... [rest of your interaction handler and client.login remains unchanged]
+// Main interaction handler (unchanged)
+client.on('interactionCreate', async interaction => {
+  try {
+    // Slash commands
+    if (interaction.isChatInputCommand()) {
+      const command = client.commands.get(interaction.commandName);
+      if (command) await command.execute(interaction);
+    }
+    // Modal submits
+    else if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('addfeed-modal')) {
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleModal(interaction);
+      } else if (interaction.customId === 'zkill-filters') {
+        const zkillsetup = require('./commands/zkillsetup');
+        await zkillsetup.handleModal(interaction);
+      } else if (interaction.customId.startsWith('editfeed-modal')) {
+        const editfeed = require('./commands/editfeed');
+        await editfeed.handleModal(interaction);
+      }
+    }
+    // Button clicks (step buttons for addfeed)
+    else if (interaction.isButton()) {
+      if (interaction.customId.startsWith('addfeed-next-step')) {
+        const addfeed = require('./commands/addfeed');
+        await addfeed.handleButton(interaction);
+      }
+    }
+    // String select menus (stopfeed)
+    else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'stopfeed-select') {
+        const stopfeed = require('./commands/stopfeed');
+        await stopfeed.handleSelect(interaction);
+      }
+    }
+  } catch (err) {
+    console.error('Interaction error:', err);
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
+      } else {
+        await interaction.reply({ content: 'There was an error while executing this interaction.', flags: 1 << 6 });
+      }
+    } catch (err2) {
+      console.error('Error sending error reply:', err2);
+    }
+  }
+});
+
+client.login(process.env.DISCORD_TOKEN);
