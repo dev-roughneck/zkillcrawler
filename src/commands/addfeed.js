@@ -45,14 +45,22 @@ function sessionExpired(cache) {
 }
 
 async function promptForText(interaction, question, cacheKey, fieldKey) {
-  await interaction.followUp({
+  // Always send the prompt and wait for it to be sent before starting the collector!
+  const sentPrompt = await interaction.followUp({
     content: question,
     ephemeral: true
   });
+
   const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
   try {
     const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
     const value = collected.first().content.trim();
+    // Only proceed if value is not empty
+    if (!value) {
+      await interaction.followUp({ content: 'Value is required. Please run /addfeed again.', ephemeral: true });
+      addfeedCache.delete(cacheKey);
+      throw new Error('Input is empty');
+    }
     const cache = addfeedCache.get(cacheKey);
     cache[fieldKey] = value;
     addfeedCache.set(cacheKey, cache);
@@ -76,17 +84,19 @@ module.exports = {
         content: 'Enter a unique feed name for this channel:',
         ephemeral: true
       });
+
+      // Wait for user reply (collector must be set after prompt is sent!)
       const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
       let feedName;
       try {
         const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
         feedName = collected.first().content.trim();
+        if (!feedName) {
+          await interaction.followUp({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
+          return;
+        }
       } catch {
         await interaction.followUp({ content: 'Timed out waiting for feed name. Please run /addfeed again.', ephemeral: true });
-        return;
-      }
-      if (!feedName) {
-        await interaction.followUp({ content: 'Feed name is required.', ephemeral: true });
         return;
       }
       if (feedExists(interaction.channel.id, feedName)) {
