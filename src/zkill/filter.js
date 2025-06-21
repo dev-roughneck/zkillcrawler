@@ -7,11 +7,11 @@
  * @returns {boolean} True if the killmail matches the filters, false otherwise.
  */
 function filterKillmail(killmail, filters) {
-  // If filters is empty or all arrays are empty and all numbers undefined, match everything
+  // If filters is empty or all arrays are empty and all numbers undefined, match NOTHING
   const hasActiveFilters = Object.values(filters).some(
     v => (Array.isArray(v) && v.length > 0) || (typeof v === 'number')
   );
-  if (!hasActiveFilters) return true;
+  if (!hasActiveFilters) return false; // <-- changed from true to false (only match if filters are set)
 
   const victim = killmail.victim || {};
   const attackers = killmail.attackers || [];
