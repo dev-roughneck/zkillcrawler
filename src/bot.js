@@ -13,6 +13,7 @@ const {
   resolveRegion
 } = require('./eveuniverse');
 const { formatKillmailEmbed } = require('./embeds');
+const { filterKillmail } = require('./filter');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -35,14 +36,8 @@ client.once('ready', () => {
   // Start single RedisQ poller for all feeds
   listenToRedisQ(async (killmail) => {
     try {
-      // === NEW LOGGING: Log the full raw killmail as received ===
-      console.log("=== RAW KILLMAIL RECEIVED ===");
-      try {
-        console.log(JSON.stringify(killmail, null, 2));
-      } catch (e) {
-        console.log("Killmail log error:", e);
-      }
-      console.log("=============================");
+      // Only log that a killmail was received, not the full payload
+      console.log("Receiving a new killmail from RedisQ...");
 
       // --- Name resolution for victim, ship, system, corp, alliance ---
       const victim = killmail.killmail?.victim || {};
@@ -69,7 +64,7 @@ client.once('ready', () => {
         region = await resolveRegion(system.region_id);
       }
 
-      // Enrich for filters and output
+      // Enrich for filters and output (not needed for filtering, but left for embed)
       const killmailWithNames = {
         ...killmail,
         victim: {
@@ -80,43 +75,28 @@ client.once('ready', () => {
           ship_type: victimShip?.name,
         },
         solar_system: system ? { name: system.name, region: region?.name } : {},
-        // attackers: to be filled below if needed
       };
 
-      // Optionally resolve attacker info if filters use attacker names
+      // Optionally resolve attacker info if filters use attacker names (not used for filtering IDs)
       let attackersWithNames = [];
       const feeds = getAllFeeds();
-      const needsAttackerNames = feeds.some(feed => {
-        const f = feed.filters || {};
-        return f.attacker_alliance || f.attacker_corp || f.attacker_character;
-      });
-      if (needsAttackerNames) {
-        attackersWithNames = await Promise.all(
-          (killmail.killmail?.attackers || []).map(async atk => {
-            const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
-            const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
-            const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
-            return {
-              ...atk,
-              character: char?.name,
-              corporation: corp?.name,
-              alliance: alliance?.name,
-            };
-          })
-        );
-        killmailWithNames.attackers = attackersWithNames;
-      } else {
-        killmailWithNames.attackers = killmail.killmail?.attackers || [];
-      }
+
+      // --- Normalization for filterKillmail ---
+      // Flatten the killmail for filtering
+      const normalizedKillmail = {
+        ...killmail.killmail,
+        victim: killmail.killmail.victim,
+        attackers: killmail.killmail.attackers,
+        zkb: killmail.zkb,
+      };
 
       console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
       for (const { channel_id, feed_name, filters } of feeds) {
         try {
           // Extra debug: log the filters for this feed
           console.log(`Feed: ${feed_name}, Channel: ${channel_id}, Filters:`, JSON.stringify(filters, null, 2));
-          // ADDITION: Log just the filters for clarity in debugging
           console.log("FEED FILTERS:", JSON.stringify(filters, null, 2));
-          const passes = await applyFilters(killmail, filters);
+          const passes = filterKillmail(normalizedKillmail, filters);
           console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
           if (passes) {
             // Attempt to fetch and post to the channel
@@ -201,70 +181,3 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
-// --- Helper: filter logic ---
-async function applyFilters(killmail, filters) {
-  // If no filters, always match
-  if (!filters || Object.keys(filters).length === 0) return true;
-
-  // Helper for "match if array is empty or contains value"
-  function matchId(val, arr) {
-    if (!arr || arr.length === 0) return true;
-    return arr.map(Number).includes(Number(val));
-  }
-
-  // Victim filters
-  const victim = killmail.killmail?.victim || {};
-  if (filters.regionIds && filters.regionIds.length > 0) {
-    if (!matchId(killmail.killmail?.region_id, filters.regionIds)) return false;
-  }
-  if (filters.systemIds && filters.systemIds.length > 0) {
-    if (!matchId(killmail.killmail?.solar_system_id, filters.systemIds)) return false;
-  }
-  if (filters.shipTypeIds && filters.shipTypeIds.length > 0) {
-    if (!matchId(victim.ship_type_id, filters.shipTypeIds)) return false;
-  }
-  if (filters.allianceIds && filters.allianceIds.length > 0) {
-    if (!matchId(victim.alliance_id, filters.allianceIds)) return false;
-  }
-  if (filters.corporationIds && filters.corporationIds.length > 0) {
-    if (!matchId(victim.corporation_id, filters.corporationIds)) return false;
-  }
-  if (filters.characterIds && filters.characterIds.length > 0) {
-    if (!matchId(victim.character_id, filters.characterIds)) return false;
-  }
-
-  // Attacker filters - at least one attacker must match
-  const attackers = killmail.killmail?.attackers || [];
-  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
-    if (!attackers.some(a => matchId(a.alliance_id, filters.attackerAllianceIds))) return false;
-  }
-  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
-    if (!attackers.some(a => matchId(a.corporation_id, filters.attackerCorporationIds))) return false;
-  }
-  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
-    if (!attackers.some(a => matchId(a.character_id, filters.attackerCharacterIds))) return false;
-  }
-  if (filters.attackerShipTypeIds && filters.attackerShipTypeIds.length > 0) {
-    if (!attackers.some(a => matchId(a.ship_type_id, filters.attackerShipTypeIds))) return false;
-  }
-
-  // ISK value filters
-  if (typeof filters.minValue === 'number' && killmail.zkb?.totalValue !== undefined) {
-    if (killmail.zkb.totalValue < filters.minValue) return false;
-  }
-  if (typeof filters.maxValue === 'number' && killmail.zkb?.totalValue !== undefined) {
-    if (killmail.zkb.totalValue > filters.maxValue) return false;
-  }
-
-  // Number of attackers
-  if (typeof filters.minAttackers === 'number') {
-    if (attackers.length < filters.minAttackers) return false;
-  }
-  if (typeof filters.maxAttackers === 'number') {
-    if (attackers.length > filters.maxAttackers) return false;
-  }
-
-  // If all checks passed:
-  return true;
-}
