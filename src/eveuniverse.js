@@ -9,6 +9,7 @@ try {
 
 const ESI_BASE = 'https://esi.evetech.net/latest';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const LY_IN_METERS = 9.4607e15;
 
 // Simple in-memory cache { key: { value, expire } }
 const cache = {};
@@ -98,7 +99,6 @@ async function resolveByName(name, category) {
   const cached = getCache(category, name.toLowerCase());
   if (cached) return cached;
   const ids = await namesToIds([name]);
-  // DEBUG: Log what ESI returned for troubleshooting
   if (!ids || !ids[category + 's'] || ids[category + 's'].length === 0) {
     console.warn(`[EVEU] namesToIds: No ${category} found for "${name}"`, ids);
   }
@@ -163,7 +163,7 @@ async function resolveSystem(input) {
     const url = `${ESI_BASE}/universe/systems/${input}/`;
     const data = await fetchWithRetry(url);
     if (data && data.solar_system_id) {
-      const result = { id: data.solar_system_id, name: data.name, region_id: data.region_id };
+      const result = { id: data.solar_system_id, name: data.name, region_id: data.region_id, position: data.position };
       setCache('solar_system', input, result);
       return result;
     }
@@ -258,6 +258,26 @@ async function getRegionIdForSystem(systemId) {
   return system && system.region_id ? system.region_id : null;
 }
 
+// --- Utility: get system position (x, y, z) ---
+async function getSystemPosition(systemId) {
+  if (!systemId) return null;
+  const system = await resolveSystem(systemId);
+  if (system && system.position) return system.position;
+  return null;
+}
+
+// --- Utility: Calculate lightyear distance between two systems ---
+async function calculateLyDistance(systemIdA, systemIdB) {
+  const posA = await getSystemPosition(systemIdA);
+  const posB = await getSystemPosition(systemIdB);
+  if (!posA || !posB) return null;
+  const dx = posA.x - posB.x;
+  const dy = posA.y - posB.y;
+  const dz = posA.z - posB.z;
+  const meters = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  return meters / LY_IN_METERS;
+}
+
 module.exports = {
   resolveAlliance,
   resolveCorporation,
@@ -268,5 +288,8 @@ module.exports = {
   resolveIds,
   idsToNames,
   namesToIds,
-  getRegionIdForSystem
+  getRegionIdForSystem,
+  getSystemPosition,
+  calculateLyDistance,
+  LY_IN_METERS
 };
