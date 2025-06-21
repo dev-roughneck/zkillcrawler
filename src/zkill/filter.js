@@ -1,6 +1,6 @@
 /**
  * Determines if a killmail matches the given filters.
- * The filter object uses normalized fields (arrays for IDs, numbers for minValue/minAttackers/maxAttackers, etc).
+ * Supports AND/OR/IF logic modes for each filter array.
  *
  * @param {Object} killmail - The killmail object from RedisQ/zkillboard, normalized/flattened.
  * @param {Object} filters - The normalized filters object.
@@ -22,28 +22,67 @@ function filterKillmail(killmail, filters) {
     if (!arr || arr.length === 0) return true;
     return arr.includes(val);
   }
+  // Helper for 'AND' logic: all IDs in arr must match
+  function matchAllIds(valArr, arr) {
+    if (!arr || arr.length === 0) return true;
+    return arr.every(id => valArr.includes(id));
+  }
+  // Helper for attacker array: get array of field values for all attackers
+  function attackerFieldArray(field) {
+    return attackers.map(a => a[field]).filter(x => x !== undefined);
+  }
 
   // Victim filters
-  if (filters.regionIds && !matchId(killmail.region_id, filters.regionIds)) return false;
-  if (filters.systemIds && !matchId(killmail.solar_system_id, filters.systemIds)) return false;
-  if (filters.shipTypeIds && !matchId(victim.ship_type_id, filters.shipTypeIds)) return false;
+  const victimFilters = [
+    { field: "regionIds",      value: killmail.region_id },
+    { field: "systemIds",      value: killmail.solar_system_id },
+    { field: "shipTypeIds",    value: victim.ship_type_id },
+    { field: "allianceIds",    value: victim.alliance_id },
+    { field: "corporationIds", value: victim.corporation_id },
+    { field: "characterIds",   value: victim.character_id }
+  ];
 
-  if (filters.allianceIds && !matchId(victim.alliance_id, filters.allianceIds)) return false;
-  if (filters.corporationIds && !matchId(victim.corporation_id, filters.corporationIds)) return false;
-  if (filters.characterIds && !matchId(victim.character_id, filters.characterIds)) return false;
+  for (const { field, value } of victimFilters) {
+    const mode = filters[`${field}Mode`] || "OR";
+    const arr = filters[field] || [];
+    if (arr.length === 0) continue; // Ignore empty filters
 
-  // Attacker filters (at least one attacker must match if filter set)
-  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
-    if (!attackers.some(a => matchId(a.alliance_id, filters.attackerAllianceIds))) return false;
+    if (mode === "OR") {
+      if (!arr.includes(value)) return false;
+    }
+    else if (mode === "AND") {
+      // For victim, only one value possible, so treat as OR
+      if (!arr.includes(value)) return false;
+    }
+    else if (mode === "IF") {
+      // Only enforce if array is non-empty (already checked)
+      if (!arr.includes(value)) return false;
+    }
   }
-  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
-    if (!attackers.some(a => matchId(a.corporation_id, filters.attackerCorporationIds))) return false;
-  }
-  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
-    if (!attackers.some(a => matchId(a.character_id, filters.attackerCharacterIds))) return false;
-  }
-  if (filters.attackerShipTypeIds && filters.attackerShipTypeIds.length > 0) {
-    if (!attackers.some(a => matchId(a.ship_type_id, filters.attackerShipTypeIds))) return false;
+
+  // Attacker filters: for each, apply OR/AND/IF logic
+  const attackerFilterFields = [
+    { filterKey: "attackerAllianceIds", field: "alliance_id" },
+    { filterKey: "attackerCorporationIds", field: "corporation_id" },
+    { filterKey: "attackerCharacterIds", field: "character_id" },
+    { filterKey: "attackerShipTypeIds", field: "ship_type_id" }
+  ];
+
+  for (const { filterKey, field } of attackerFilterFields) {
+    const arr = filters[filterKey] || [];
+    if (arr.length === 0) continue;
+    const mode = filters[`${filterKey}Mode`] || "OR";
+    const attackerVals = attackerFieldArray(field);
+
+    if (mode === "OR") {
+      if (!attackerVals.some(val => arr.includes(val))) return false;
+    } else if (mode === "AND") {
+      // Every ID in arr must appear in at least one attacker
+      if (!arr.every(id => attackerVals.includes(id))) return false;
+    } else if (mode === "IF") {
+      // Only enforce if array is non-empty (already checked)
+      if (!attackerVals.some(val => arr.includes(val))) return false;
+    }
   }
 
   // ISK value filters
