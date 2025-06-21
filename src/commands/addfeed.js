@@ -73,12 +73,12 @@ module.exports = {
   async execute(interaction) {
     try {
       // Step 1: Get feed name from slash command option
-     const feedNameRaw = interaction.options.getString('feedname');
-const feedName = feedNameRaw ? feedNameRaw.trim() : '';
-if (!feedName) {
-  await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
-  return;
-}
+      const feedNameRaw = interaction.options.getString('feedname');
+      const feedName = feedNameRaw ? feedNameRaw.trim() : '';
+      if (!feedName) {
+        await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
+        return;
+      }
       if (feedExists(interaction.channel.id, feedName)) {
         await interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
         return;
@@ -121,7 +121,7 @@ if (!feedName) {
         createdAt: Date.now()
       };
       addfeedCache.set(cacheKey, cache);
-      await selectInt.reply({ content: `You selected: ${selectedFilters.join(', ')}`, ephemeral: true });
+      await selectInt.followUp({ content: `You selected: ${selectedFilters.join(', ')}`, ephemeral: true });
 
       // Step 3: Prompt for each selected filter value (text-based)
       for (const filterField of selectedFilters) {
@@ -152,7 +152,7 @@ if (!feedName) {
           time: 60000
         });
         logicModes[logicField.key] = logicInt.values[0];
-        await logicInt.reply({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
+        await logicInt.followUp({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
       }
 
       // Step 6: Build filter object and save
@@ -180,7 +180,7 @@ if (!feedName) {
       const filters = await buildFilterObject(step1, step2, step3, logicModes, filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey)));
       setFeed(interaction.channel.id, feedName, { filters });
       addfeedCache.delete(cacheKey);
-      await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
+      await selectInt.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
     } catch (err) {
       console.error('Error in addfeed wizard:', err);
       try {
