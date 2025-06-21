@@ -2,13 +2,11 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-// Use the shared database file in /data
 const DATA_DIR = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_FILE = path.join(DATA_DIR, 'botdata.sqlite');
 const db = new Database(DB_FILE);
 
-// Create the feeds table if it doesn't exist (snake_case column names)
 db.prepare(`
   CREATE TABLE IF NOT EXISTS feeds (
     channel_id TEXT NOT NULL,
@@ -18,11 +16,6 @@ db.prepare(`
   )
 `).run();
 
-/**
- * Validate the filters object for supported structure, including AND/OR/IF logic modes.
- * @param {Object} filters
- * @returns {Object} - A cleaned, valid filters object.
- */
 function validateFilters(filters) {
   const valid = {};
   if (!filters || typeof filters !== 'object') return valid;
@@ -39,7 +32,7 @@ function validateFilters(filters) {
     'shipTypeIds',
     'attackerShipTypeIds'
   ].forEach(key => {
-    if (Array.isArray(filters[key])) {
+    if (Array.isArray(filters[key]) && filters[key].length > 0) {
       valid[key] = filters[key].filter(id => typeof id === 'number');
     }
     const modeKey = `${key}Mode`;
@@ -60,13 +53,12 @@ function validateFilters(filters) {
   if (typeof filters.maxAttackers === 'number' && !isNaN(filters.maxAttackers)) {
     valid.maxAttackers = filters.maxAttackers;
   }
-  if (Array.isArray(filters.regions)) {
+  if (Array.isArray(filters.regions) && filters.regions.length > 0) {
     valid.regions = filters.regions.filter(s => typeof s === 'string');
   }
-
-  // ---- ADDED: securityClass, distanceFromSystemId, maxDistanceLy ----
   if (
     Array.isArray(filters.securityClass) &&
+    filters.securityClass.length > 0 &&
     filters.securityClass.every(x =>
       typeof x === "string" && ["highsec", "lowsec", "nullsec", "wh"].includes(x.toLowerCase())
     )
@@ -79,16 +71,10 @@ function validateFilters(filters) {
   if (typeof filters.maxDistanceLy === 'number' && !isNaN(filters.maxDistanceLy)) {
     valid.maxDistanceLy = filters.maxDistanceLy;
   }
-  // ------------------------------------------------------
 
   return valid;
 }
 
-/**
- * Get all feeds for a specific channel.
- * @param {string} channelId
- * @returns {Object} feedName -> {filters}
- */
 function getFeeds(channelId) {
   const rows = db.prepare(
     'SELECT feed_name, filters_json FROM feeds WHERE channel_id = ?'
@@ -100,10 +86,6 @@ function getFeeds(channelId) {
   return feeds;
 }
 
-/**
- * Get all feeds as a flat array.
- * @returns {Array} [{channel_id, feed_name, filters}]
- */
 function getAllFeeds() {
   const rows = db.prepare(
     'SELECT channel_id, feed_name, filters_json FROM feeds'
@@ -115,12 +97,6 @@ function getAllFeeds() {
   }));
 }
 
-/**
- * Check if a feed exists.
- * @param {string} channelId
- * @param {string} feedName
- * @returns {boolean}
- */
 function feedExists(channelId, feedName) {
   const row = db.prepare(
     'SELECT 1 FROM feeds WHERE channel_id = ? AND feed_name = ?'
@@ -128,12 +104,6 @@ function feedExists(channelId, feedName) {
   return !!row;
 }
 
-/**
- * Set or update a feed.
- * @param {string} channelId
- * @param {string} feedName
- * @param {Object} feedObj
- */
 function setFeed(channelId, feedName, feedObj) {
   const safeFilters = validateFilters(feedObj.filters || {});
   db.prepare(`
@@ -143,11 +113,6 @@ function setFeed(channelId, feedName, feedObj) {
   `).run(channelId, feedName, JSON.stringify(safeFilters));
 }
 
-/**
- * Delete a feed.
- * @param {string} channelId
- * @param {string} feedName
- */
 function deleteFeed(channelId, feedName) {
   db.prepare(
     'DELETE FROM feeds WHERE channel_id = ? AND feed_name = ?'
