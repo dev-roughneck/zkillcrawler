@@ -5,14 +5,6 @@ const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
 const { filterKillmail } = require('./zkill/filter');
-const {
-  resolveCharacter,
-  resolveCorporation,
-  resolveAlliance,
-  resolveShipType,
-  resolveSystem,
-  resolveRegion
-} = require('./eveuniverse');
 const { formatKillmailEmbed } = require('./embeds');
 
 const client = new Client({
@@ -39,75 +31,17 @@ client.once('ready', () => {
       // Only log that a killmail was received (no full payload)
       console.log("Receiving a new killmail from RedisQ...");
 
-      // --- Name resolution for victim, ship, system, corp, alliance ---
-      const victim = killmail.killmail?.victim || {};
-      const systemId = killmail.killmail?.solar_system_id;
-      const shipTypeId = victim.ship_type_id;
-      const corpId = victim.corporation_id;
-      const allianceId = victim.alliance_id;
-      const charId = victim.character_id;
-
-      // These may be undefined (especially alliance)
-      const [victimChar, victimCorp, victimAlliance, victimShip, system] = await Promise.all([
-        charId ? resolveCharacter(charId) : null,
-        corpId ? resolveCorporation(corpId) : null,
-        allianceId ? resolveAlliance(allianceId) : null,
-        shipTypeId ? resolveShipType(shipTypeId) : null,
-        systemId ? resolveSystem(systemId) : null,
-      ]);
-
-      // Try to resolve region, fallback to system.region_id if available
-      let region = null;
-      if (killmail.killmail?.region_id) {
-        region = await resolveRegion(killmail.killmail.region_id);
-      } else if (system && system.region_id) {
-        region = await resolveRegion(system.region_id);
-      }
-
-      // Enrich for filters and output (not used in filters, but may be useful in embeds)
-      const killmailWithNames = {
-        ...killmail,
-        victim: {
-          ...victim,
-          character: victimChar?.name,
-          corporation: victimCorp?.name,
-          alliance: victimAlliance?.name,
-          ship_type: victimShip?.name,
-        },
-        solar_system: system ? { name: system.name, region: region?.name } : {},
-      };
-
-      let attackersWithNames = [];
+      // Fetch all feeds (each has channel_id, feed_name, filters)
       const feeds = getAllFeeds();
-      const needsAttackerNames = feeds.some(feed => {
-        const f = feed.filters || {};
-        return f.attacker_alliance || f.attacker_corp || f.attacker_character;
-      });
-      if (needsAttackerNames) {
-        attackersWithNames = await Promise.all(
-          (killmail.killmail?.attackers || []).map(async atk => {
-            const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
-            const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
-            const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
-            return {
-              ...atk,
-              character: char?.name,
-              corporation: corp?.name,
-              alliance: alliance?.name,
-            };
-          })
-        );
-        killmailWithNames.attackers = attackersWithNames;
-      } else {
-        killmailWithNames.attackers = killmail.killmail?.attackers || [];
-      }
 
       console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
+
       for (const { channel_id, feed_name, filters } of feeds) {
         try {
-          // --- Use only the normalized, ID-based filters ---
+          // Use only the normalized, ID-based filters
           const passes = filterKillmail(killmail.killmail, filters);
           console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
+
           if (passes) {
             // Attempt to fetch and post to the channel
             const channel = await client.channels.fetch(channel_id).catch((err) => {
@@ -116,13 +50,12 @@ client.once('ready', () => {
             });
             if (channel) {
               console.log(`Posting killmail to channel ${channel_id}`);
+              // Pass only the minimum killmail data needed; embed will do ESI lookups as needed
               const formattedKillmail = {
                 ...killmail.killmail,
                 zkb: killmail.zkb,
-                victim,
-                attackers: killmail.killmail.attackers || [],
                 killID: killmail.killID,
-                region_id: region?.id // pass region for embed formatting
+                region_id: killmail.killmail?.region_id // pass region for embed formatting if present
               };
               const embed = await formatKillmailEmbed(formattedKillmail);
               await channel.send({ embeds: [embed] });
