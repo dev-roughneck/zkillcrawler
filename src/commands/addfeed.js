@@ -242,6 +242,8 @@ module.exports = {
         logicModes,
         filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey))
       );
+      console.log("DEBUG: Saving filters", JSON.stringify(filters, null, 2));
+setFeed(interaction.channel.id, feedName, { filters });
       setFeed(interaction.channel.id, feedName, { filters });
       await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
       addfeedCache.delete(cacheKey);
