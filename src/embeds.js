@@ -2,9 +2,8 @@ const { EmbedBuilder } = require('discord.js');
 const eveu = require('./eveuniverse');
 
 /**
- * Formats a killmail as a Discord Embed with maximum resolution and image/logo support.
- * Shows: Victim (character with link, corp, alliance, ship), system (with region), 
- * final blow (attacker info), ISK value, time, ship image, and alliance/corp logo.
+ * Formats a killmail as a Discord Embed using a wide, compact, information-rich layout.
+ * Shows: Victim (link, corp, alliance, ship), system (w/ region), ISK value, attackers, final blow, time, images.
  */
 async function formatKillmailEmbed(killmail) {
   const victim = killmail.victim || {};
@@ -43,7 +42,7 @@ async function formatKillmailEmbed(killmail) {
   // Victim character link
   const victimCharLink = victimChar
     ? `[${victimChar.name}](https://evewho.com/character/${victimChar.id})`
-    : 'Unknown';
+    : (victim.character_id ? `[${victim.character_id}](https://evewho.com/character/${victim.character_id})` : 'Unknown');
 
   // Final blow attacker (resolve IDs to names)
   let finalAttackerChar, finalAttackerCorp, finalAttackerAlliance, finalAttackerShip, finalAttackerWeapon;
@@ -60,12 +59,12 @@ async function formatKillmailEmbed(killmail) {
   // ISK Value
   const iskValue = zkb.totalValue ? `${Math.round(zkb.totalValue).toLocaleString()} ISK` : 'Unknown';
 
-  // Ship image
+  // Ship image (left side, wide format)
   const shipImage = victimShip
     ? `https://images.evetech.net/types/${victimShip.id}/render?size=256`
     : null;
 
-  // Alliance/corp logo
+  // Alliance/corp logo (right side, wide format)
   let logo = null;
   if (victimAlliance && victimAlliance.id) {
     logo = `https://images.evetech.net/alliances/${victimAlliance.id}/logo?size=128`;
@@ -96,23 +95,21 @@ async function formatKillmailEmbed(killmail) {
     `Ship: ${finalAttackerShip?.name || finalBlow.ship_type_id || "Unknown"}\n` +
     `Weapon: ${finalAttackerWeapon?.name || finalBlow.weapon_type_id || "Unknown"}`;
 
-  // Build the embed
+  // Build the embed (wide format: all main info as inline fields, logo as image, ship as thumbnail)
   const embed = new EmbedBuilder()
     .setTitle(`Killmail: ${killID}`)
     .setURL(killUrl)
-    .setDescription(
-      `**Victim:** ${victimCharLink}\n` +
-      `**Corp:** ${victimCorp?.name || 'Unknown'}\n` +
-      `**Alliance:** ${victimAlliance?.name || 'None'}\n` +
-      `**Ship:** ${victimShip?.name || 'Unknown'}\n` +
-      `**System:** ${systemStr}\n` +
-      `**Time:** ${killmail.killmail_time ? new Date(killmail.killmail_time).toUTCString() : "Unknown"}`
-    )
     .setColor(0xff0000)
     .addFields(
+      { name: 'Victim', value: victimCharLink, inline: true },
+      { name: 'Corp', value: victimCorp?.name || 'Unknown', inline: true },
+      { name: 'Alliance', value: victimAlliance?.name || 'None', inline: true },
+      { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
+      { name: 'System', value: systemStr, inline: true },
       { name: 'ISK Value', value: iskValue, inline: true },
       { name: 'Attackers', value: attackers.length.toString(), inline: true },
-      { name: 'Final Blow', value: finalBlowStr, inline: false }
+      { name: 'Final Blow', value: finalBlowStr, inline: true },
+      { name: 'Time', value: killmail.killmail_time ? new Date(killmail.killmail_time).toUTCString() : "Unknown", inline: true }
     )
     .setFooter({ text: "zKillboard.com", iconURL: "https://zkillboard.com/img/favicon.png" });
 
