@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
-const filters = require('./filters');
+const filters = require('./zkill/filter');
 const models = require('./feeds');
 require('dotenv').config();
 
