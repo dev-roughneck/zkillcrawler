@@ -4,7 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const { listenToRedisQ } = require('./zkill/redisq');
 const { getAllFeeds } = require('./feeds');
-const { filterKillmail } = require('./zkill/filter');
+const {
+  resolveCharacter,
+  resolveCorporation,
+  resolveAlliance,
+  resolveShipType,
+  resolveSystem,
+  resolveRegion
+} = require('./eveuniverse');
 const { formatKillmailEmbed } = require('./embeds');
 
 const client = new Client({
@@ -31,17 +38,76 @@ client.once('ready', () => {
       // Only log that a killmail was received (no full payload)
       console.log("Receiving a new killmail from RedisQ...");
 
-      // Fetch all feeds (each has channel_id, feed_name, filters)
+      // --- Name resolution for victim, ship, system, corp, alliance ---
+      const victim = killmail.killmail?.victim || {};
+      const systemId = killmail.killmail?.solar_system_id;
+      const shipTypeId = victim.ship_type_id;
+      const corpId = victim.corporation_id;
+      const allianceId = victim.alliance_id;
+      const charId = victim.character_id;
+
+      // These may be undefined (especially alliance)
+      const [victimChar, victimCorp, victimAlliance, victimShip, system] = await Promise.all([
+        charId ? resolveCharacter(charId) : null,
+        corpId ? resolveCorporation(corpId) : null,
+        allianceId ? resolveAlliance(allianceId) : null,
+        shipTypeId ? resolveShipType(shipTypeId) : null,
+        systemId ? resolveSystem(systemId) : null,
+      ]);
+
+      // Try to resolve region, fallback to system.region_id if available
+      let region = null;
+      if (killmail.killmail?.region_id) {
+        region = await resolveRegion(killmail.killmail.region_id);
+      } else if (system && system.region_id) {
+        region = await resolveRegion(system.region_id);
+      }
+
+      // Enrich for filters and output
+      const killmailWithNames = {
+        ...killmail,
+        victim: {
+          ...victim,
+          character: victimChar?.name,
+          corporation: victimCorp?.name,
+          alliance: victimAlliance?.name,
+          ship_type: victimShip?.name,
+        },
+        solar_system: system ? { name: system.name, region: region?.name } : {},
+        // attackers: to be filled below if needed
+      };
+
+      // Optionally resolve attacker info if filters use attacker names
+      let attackersWithNames = [];
       const feeds = getAllFeeds();
+      const needsAttackerNames = feeds.some(feed => {
+        const f = feed.filters || {};
+        return f.attacker_alliance || f.attacker_corp || f.attacker_character;
+      });
+      if (needsAttackerNames) {
+        attackersWithNames = await Promise.all(
+          (killmail.killmail?.attackers || []).map(async atk => {
+            const char = atk.character_id ? await resolveCharacter(atk.character_id) : null;
+            const corp = atk.corporation_id ? await resolveCorporation(atk.corporation_id) : null;
+            const alliance = atk.alliance_id ? await resolveAlliance(atk.alliance_id) : null;
+            return {
+              ...atk,
+              character: char?.name,
+              corporation: corp?.name,
+              alliance: alliance?.name,
+            };
+          })
+        );
+        killmailWithNames.attackers = attackersWithNames;
+      } else {
+        killmailWithNames.attackers = killmail.killmail?.attackers || [];
+      }
 
       console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
-
       for (const { channel_id, feed_name, filters } of feeds) {
         try {
-          // Use only the normalized, ID-based filters
-          const passes = filterKillmail(killmail.killmail, filters);
+          const passes = await applyFilters(killmail, filters);
           console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
-
           if (passes) {
             // Attempt to fetch and post to the channel
             const channel = await client.channels.fetch(channel_id).catch((err) => {
@@ -50,12 +116,13 @@ client.once('ready', () => {
             });
             if (channel) {
               console.log(`Posting killmail to channel ${channel_id}`);
-              // Pass only the minimum killmail data needed; embed will do ESI lookups as needed
               const formattedKillmail = {
                 ...killmail.killmail,
                 zkb: killmail.zkb,
+                victim,
+                attackers: killmail.killmail.attackers || [],
                 killID: killmail.killID,
-                region_id: killmail.killmail?.region_id // pass region for embed formatting if present
+                region_id: region?.id // pass region for embed formatting
               };
               const embed = await formatKillmailEmbed(formattedKillmail);
               await channel.send({ embeds: [embed] });
@@ -124,3 +191,70 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
+
+// --- Helper: filter logic ---
+async function applyFilters(killmail, filters) {
+  // If no filters, always match
+  if (!filters || Object.keys(filters).length === 0) return true;
+
+  // Helper for "match if array is empty or contains value"
+  function matchId(val, arr) {
+    if (!arr || arr.length === 0) return true;
+    return arr.map(Number).includes(Number(val));
+  }
+
+  // Victim filters
+  const victim = killmail.killmail?.victim || {};
+  if (filters.regionIds && filters.regionIds.length > 0) {
+    if (!matchId(killmail.killmail?.region_id, filters.regionIds)) return false;
+  }
+  if (filters.systemIds && filters.systemIds.length > 0) {
+    if (!matchId(killmail.killmail?.solar_system_id, filters.systemIds)) return false;
+  }
+  if (filters.shipTypeIds && filters.shipTypeIds.length > 0) {
+    if (!matchId(victim.ship_type_id, filters.shipTypeIds)) return false;
+  }
+  if (filters.allianceIds && filters.allianceIds.length > 0) {
+    if (!matchId(victim.alliance_id, filters.allianceIds)) return false;
+  }
+  if (filters.corporationIds && filters.corporationIds.length > 0) {
+    if (!matchId(victim.corporation_id, filters.corporationIds)) return false;
+  }
+  if (filters.characterIds && filters.characterIds.length > 0) {
+    if (!matchId(victim.character_id, filters.characterIds)) return false;
+  }
+
+  // Attacker filters - at least one attacker must match
+  const attackers = killmail.killmail?.attackers || [];
+  if (filters.attackerAllianceIds && filters.attackerAllianceIds.length > 0) {
+    if (!attackers.some(a => matchId(a.alliance_id, filters.attackerAllianceIds))) return false;
+  }
+  if (filters.attackerCorporationIds && filters.attackerCorporationIds.length > 0) {
+    if (!attackers.some(a => matchId(a.corporation_id, filters.attackerCorporationIds))) return false;
+  }
+  if (filters.attackerCharacterIds && filters.attackerCharacterIds.length > 0) {
+    if (!attackers.some(a => matchId(a.character_id, filters.attackerCharacterIds))) return false;
+  }
+  if (filters.attackerShipTypeIds && filters.attackerShipTypeIds.length > 0) {
+    if (!attackers.some(a => matchId(a.ship_type_id, filters.attackerShipTypeIds))) return false;
+  }
+
+  // ISK value filters
+  if (typeof filters.minValue === 'number' && killmail.zkb?.totalValue !== undefined) {
+    if (killmail.zkb.totalValue < filters.minValue) return false;
+  }
+  if (typeof filters.maxValue === 'number' && killmail.zkb?.totalValue !== undefined) {
+    if (killmail.zkb.totalValue > filters.maxValue) return false;
+  }
+
+  // Number of attackers
+  if (typeof filters.minAttackers === 'number') {
+    if (attackers.length < filters.minAttackers) return false;
+  }
+  if (typeof filters.maxAttackers === 'number') {
+    if (attackers.length > filters.maxAttackers) return false;
+  }
+
+  // If all checks passed:
+  return true;
+}
