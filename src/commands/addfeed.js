@@ -70,7 +70,7 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
         throw new Error('Non-numeric input for ID-only field');
       }
     }
-    const cache = addfeedCache.get(cacheKey);
+    const cache = addfeedCache.get(cacheKey) || {};
     cache[fieldKey] = value;
     addfeedCache.set(cacheKey, cache);
     return value;
@@ -83,6 +83,76 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
     addfeedCache.delete(cacheKey);
     throw new Error('Input timed out');
   }
+}
+
+function parseIdArray(str) {
+  if (!str || typeof str !== 'string') return [];
+  return str
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => /^\d+$/.test(s))
+    .map(Number);
+}
+
+function buildFilterObject(
+  step1, step2, step3, logicModes, activeLogicFields, securityClass, distanceFromSystemId, maxDistanceLy
+) {
+  const filters = {};
+  filters.corporationIds = parseIdArray(step1.corporations);
+  filters.corporationIdsMode = logicModes?.corporationIds || 'OR';
+  filters.characterIds = parseIdArray(step1.characters);
+  filters.characterIdsMode = logicModes?.characterIds || 'OR';
+  filters.allianceIds = parseIdArray(step1.alliances);
+  filters.allianceIdsMode = logicModes?.allianceIds || 'OR';
+  filters.regionIds = parseIdArray(step1.regions);
+  filters.regionIdsMode = logicModes?.regionIds || 'OR';
+  filters.attackerCorporationIds = parseIdArray(step2.attacker_corporations);
+  filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
+  filters.attackerCharacterIds = parseIdArray(step2.attacker_characters);
+  filters.attackerCharacterIdsMode = logicModes?.attackerCharacterIds || 'OR';
+  filters.attackerAllianceIds = parseIdArray(step2.attacker_alliances);
+  filters.attackerAllianceIdsMode = logicModes?.attackerAllianceIds || 'OR';
+  filters.systemIds = parseIdArray(step2.systems);
+  filters.systemIdsMode = logicModes?.systemIds || 'OR';
+  filters.shipTypeIds = parseIdArray(step2.shiptypes);
+  filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
+  if (Array.isArray(activeLogicFields)) {
+    for (const f of activeLogicFields) {
+      if (logicModes && logicModes[f.key] !== undefined) {
+        filters[`${f.key}Mode`] = logicModes[f.key];
+      }
+    }
+  }
+  filters.minValue =
+    step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
+      ? parseFloat(step3.min_isk.replace(/,/g, ''))
+      : undefined;
+  filters.maxValue =
+    step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, '')))
+      ? parseFloat(step3.max_isk.replace(/,/g, ''))
+      : undefined;
+  filters.minAttackers =
+    step3.min_attackers && !isNaN(parseInt(step3.min_attackers))
+      ? parseInt(step3.min_attackers)
+      : undefined;
+  filters.maxAttackers =
+    step3.max_attackers && !isNaN(parseInt(step3.max_attackers))
+      ? parseInt(step3.max_attackers)
+      : undefined;
+  if (securityClass) {
+    filters.securityClass = securityClass.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  }
+  if (distanceFromSystemId && /^\d+$/.test(distanceFromSystemId)) {
+    filters.distanceFromSystemId = Number(distanceFromSystemId);
+  }
+  if (maxDistanceLy && !isNaN(Number(maxDistanceLy))) {
+    filters.maxDistanceLy = Number(maxDistanceLy);
+  }
+  // Remove empty array fields so blank fields are ignored during filter matching
+  Object.keys(filters).forEach(key => {
+    if (Array.isArray(filters[key]) && filters[key].length === 0) delete filters[key];
+  });
+  return filters;
 }
 
 module.exports = {
@@ -161,6 +231,7 @@ module.exports = {
         } else {
           if (!selectedFilters.includes(selected)) {
             selectedFilters.push(selected);
+            cache = addfeedCache.get(cacheKey) || {};
             cache.selectedFilters = selectedFilters;
             addfeedCache.set(cacheKey, cache);
 
@@ -208,6 +279,7 @@ module.exports = {
               if (!secInt.replied && !secInt.deferred) {
                 await secInt.deferReply({ ephemeral: true });
               }
+              cache = addfeedCache.get(cacheKey) || {};
               cache['security_class'] = secInt.values.join(',');
               addfeedCache.set(cacheKey, cache);
               await secInt.followUp({ content: `Selected security classes: ${secInt.values.join(', ')}`, ephemeral: true });
@@ -241,11 +313,42 @@ module.exports = {
         }
       }
 
+      // Get final cache for user
+      const cacheFinal = addfeedCache.get(cacheKey) || {};
+
       await promptForText(interaction, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
       await promptForText(interaction, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
       await promptForText(interaction, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
       await promptForText(interaction, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
 
+      // Re-fetch cache after last prompts
+      const cacheFinal2 = addfeedCache.get(cacheKey) || {};
+
+      const step1 = {
+        feedName: cacheFinal2.feedName,
+        corporations: cacheFinal2.corporations || '',
+        characters: cacheFinal2.characters || '',
+        alliances: cacheFinal2.alliances || '',
+        regions: cacheFinal2.regions || ''
+      };
+      const step2 = {
+        attacker_corporations: cacheFinal2.attacker_corporations || '',
+        attacker_characters: cacheFinal2.attacker_characters || '',
+        attacker_alliances: cacheFinal2.attacker_alliances || '',
+        systems: cacheFinal2.systems || '',
+        shiptypes: cacheFinal2.shiptypes || ''
+      };
+      const step3 = {
+        min_isk: cacheFinal2.min_isk || '',
+        max_isk: cacheFinal2.max_isk || '',
+        min_attackers: cacheFinal2.min_attackers || '',
+        max_attackers: cacheFinal2.max_attackers || ''
+      };
+      const securityClass = cacheFinal2.security_class || '';
+      const distanceFromSystemId = cacheFinal2.distance_from_system_id || '';
+      const maxDistanceLy = cacheFinal2.max_distance_ly || '';
+
+      // Gather logic modes
       const logicModes = {};
       for (const filterField of selectedFilters) {
         const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
@@ -266,31 +369,6 @@ module.exports = {
         await logicInt.followUp({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
         logicModes[logicField.key] = logicInt.values[0];
       }
-
-      const cacheFinal = addfeedCache.get(cacheKey);
-      const step1 = {
-        feedName: cacheFinal.feedName,
-        corporations: cacheFinal.corporations || '',
-        characters: cacheFinal.characters || '',
-        alliances: cacheFinal.alliances || '',
-        regions: cacheFinal.regions || ''
-      };
-      const step2 = {
-        attacker_corporations: cacheFinal.attacker_corporations || '',
-        attacker_characters: cacheFinal.attacker_characters || '',
-        attacker_alliances: cacheFinal.attacker_alliances || '',
-        systems: cacheFinal.systems || '',
-        shiptypes: cacheFinal.shiptypes || ''
-      };
-      const step3 = {
-        min_isk: cacheFinal.min_isk || '',
-        max_isk: cacheFinal.max_isk || '',
-        min_attackers: cacheFinal.min_attackers || '',
-        max_attackers: cacheFinal.max_attackers || ''
-      };
-      const securityClass = cacheFinal.security_class || '';
-      const distanceFromSystemId = cacheFinal.distance_from_system_id || '';
-      const maxDistanceLy = cacheFinal.max_distance_ly || '';
 
       const filters = buildFilterObject(
         step1,
@@ -318,67 +396,3 @@ module.exports = {
     }
   }
 };
-
-function parseIdArray(str) {
-  if (!str || typeof str !== 'string') return [];
-  return str.split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).map(Number);
-}
-
-function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, securityClass, distanceFromSystemId, maxDistanceLy) {
-  const filters = {};
-  filters.corporationIds = parseIdArray(step1.corporations);
-  filters.corporationIdsMode = logicModes?.corporationIds || 'OR';
-  filters.characterIds = parseIdArray(step1.characters);
-  filters.characterIdsMode = logicModes?.characterIds || 'OR';
-  filters.allianceIds = parseIdArray(step1.alliances);
-  filters.allianceIdsMode = logicModes?.allianceIds || 'OR';
-  filters.regionIds = parseIdArray(step1.regions);
-  filters.regionIdsMode = logicModes?.regionIds || 'OR';
-  filters.attackerCorporationIds = parseIdArray(step2.attacker_corporations);
-  filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
-  filters.attackerCharacterIds = parseIdArray(step2.attacker_characters);
-  filters.attackerCharacterIdsMode = logicModes?.attackerCharacterIds || 'OR';
-  filters.attackerAllianceIds = parseIdArray(step2.attacker_alliances);
-  filters.attackerAllianceIdsMode = logicModes?.attackerAllianceIds || 'OR';
-  filters.systemIds = parseIdArray(step2.systems);
-  filters.systemIdsMode = logicModes?.systemIds || 'OR';
-  filters.shipTypeIds = parseIdArray(step2.shiptypes);
-  filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
-  if (Array.isArray(activeLogicFields)) {
-    for (const f of activeLogicFields) {
-      if (logicModes && logicModes[f.key] !== undefined) {
-        filters[`${f.key}Mode`] = logicModes[f.key];
-      }
-    }
-  }
-  filters.minValue =
-    step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
-      ? parseFloat(step3.min_isk.replace(/,/g, ''))
-      : undefined;
-  filters.maxValue =
-    step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, '')))
-      ? parseFloat(step3.max_isk.replace(/,/g, ''))
-      : undefined;
-  filters.minAttackers =
-    step3.min_attackers && !isNaN(parseInt(step3.min_attackers))
-      ? parseInt(step3.min_attackers)
-      : undefined;
-  filters.maxAttackers =
-    step3.max_attackers && !isNaN(parseInt(step3.max_attackers))
-      ? parseInt(step3.max_attackers)
-      : undefined;
-  if (securityClass) {
-    filters.securityClass = securityClass.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-  }
-  if (distanceFromSystemId && /^\d+$/.test(distanceFromSystemId)) {
-    filters.distanceFromSystemId = Number(distanceFromSystemId);
-  }
-  if (maxDistanceLy && !isNaN(Number(maxDistanceLy))) {
-    filters.maxDistanceLy = Number(maxDistanceLy);
-  }
-  // Remove empty array fields so blank fields are ignored during filter matching
-  Object.keys(filters).forEach(key => {
-    if (Array.isArray(filters[key]) && filters[key].length === 0) delete filters[key];
-  });
-  return filters;
-}
