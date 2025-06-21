@@ -6,17 +6,22 @@ const {
 const { setFeed, feedExists } = require('../feeds');
 
 const filterLogicFieldsMaster = [
-  { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations' },
-  { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters' },
-  { key: 'allianceIds', label: 'Victim Alliance(s)', inputKey: 'alliances' },
-  { key: 'regionIds', label: 'Region(s)', inputKey: 'regions' },
-  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)', inputKey: 'attacker_corporations' },
-  { key: 'attackerCharacterIds', label: 'Attacker Character(s)', inputKey: 'attacker_characters' },
-  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances' },
-  { key: 'systemIds', label: 'System(s)', inputKey: 'systems' },
-  { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes' },
-  { key: 'securityClass', label: 'System Security Class', inputKey: 'security_class' },
-  { key: 'distanceFromSystem', label: 'Max Lightyears from System', inputKey: 'distance_from_system' },
+  { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations', idOnly: true },
+  { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters', idOnly: true },
+  { key: 'allianceIds', label: 'Victim Alliance(s)', inputKey: 'alliances', idOnly: true },
+  { key: 'regionIds', label: 'Region(s)', inputKey: 'regions', idOnly: true },
+  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)', inputKey: 'attacker_corporations', idOnly: true },
+  { key: 'attackerCharacterIds', label: 'Attacker Character(s)', inputKey: 'attacker_characters', idOnly: true },
+  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances', idOnly: true },
+  { key: 'systemIds', label: 'System(s)', inputKey: 'systems', idOnly: true },
+  { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes', idOnly: true },
+  { key: 'securityClass', label: 'System Security Class', inputKey: 'security_class', idOnly: false },
+  { key: 'distanceFromSystemId', label: 'System ID for distance', inputKey: 'distance_from_system_id', idOnly: true },
+  { key: 'maxDistanceLy', label: 'Max Lightyears', inputKey: 'max_distance_ly', idOnly: false },
+  { key: 'minValue', label: 'Minimum ISK', inputKey: 'min_isk', idOnly: false },
+  { key: 'maxValue', label: 'Maximum ISK', inputKey: 'max_isk', idOnly: false },
+  { key: 'minAttackers', label: 'Minimum Attackers', inputKey: 'min_attackers', idOnly: false },
+  { key: 'maxAttackers', label: 'Maximum Attackers', inputKey: 'max_attackers', idOnly: false },
 ];
 
 const addfeedCache = new Map();
@@ -26,9 +31,9 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
   if (idOnly) msg += '\n**Enter numeric ID(s) only, comma-separated. Names are not accepted.**';
   if (typeof msg === 'string' && msg.trim().length > 0) {
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: msg, ephemeral: true });
+      await interaction.reply({ content: msg, flags: 1 << 6 }); // ephemeral via flags
     } else {
-      await interaction.followUp({ content: msg, ephemeral: true });
+      await interaction.followUp({ content: msg, flags: 1 << 6 });
     }
   }
   const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
@@ -37,9 +42,9 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
     const value = collected.first().content.trim();
     if (!allowBlank && !value) {
       if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
+        await interaction.reply({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, flags: 1 << 6 });
       } else {
-        await interaction.followUp({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
+        await interaction.followUp({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, flags: 1 << 6 });
       }
       addfeedCache.delete(cacheKey);
       throw new Error('Input is empty');
@@ -49,7 +54,7 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
       if (!parts.every(v => /^\d+$/.test(v))) {
         await interaction.followUp({
           content: '❌ Only numeric ID(s) are allowed. Names are not accepted. Please look up the correct ID and try again.',
-          ephemeral: true
+          flags: 1 << 6
         });
         addfeedCache.delete(cacheKey);
         throw new Error('Non-numeric input for ID-only field');
@@ -61,9 +66,9 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
     return value;
   } catch {
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+      await interaction.reply({ content: 'Timed out waiting for input. Please run /addfeed again.', flags: 1 << 6 });
     } else {
-      await interaction.followUp({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+      await interaction.followUp({ content: 'Timed out waiting for input. Please run /addfeed again.', flags: 1 << 6 });
     }
     addfeedCache.delete(cacheKey);
     throw new Error('Input timed out');
@@ -79,48 +84,29 @@ function parseIdArray(str) {
     .map(Number);
 }
 
-function buildFilterObject(
-  step1, step2, step3, securityClass, distanceFromSystemId, maxDistanceLy
-) {
+function buildFilterObject(cache) {
   const filters = {};
-  filters.corporationIds = parseIdArray(step1.corporations);
-  filters.characterIds = parseIdArray(step1.characters);
-  filters.allianceIds = parseIdArray(step1.alliances);
-  filters.regionIds = parseIdArray(step1.regions);
-  filters.attackerCorporationIds = parseIdArray(step2.attacker_corporations);
-  filters.attackerCharacterIds = parseIdArray(step2.attacker_characters);
-  filters.attackerAllianceIds = parseIdArray(step2.attacker_alliances);
-  filters.systemIds = parseIdArray(step2.systems);
-  filters.shipTypeIds = parseIdArray(step2.shiptypes);
-  filters.minValue =
-    step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
-      ? parseFloat(step3.min_isk.replace(/,/g, ''))
-      : undefined;
-  filters.maxValue =
-    step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, '')))
-      ? parseFloat(step3.max_isk.replace(/,/g, ''))
-      : undefined;
-  filters.minAttackers =
-    step3.min_attackers && !isNaN(parseInt(step3.min_attackers))
-      ? parseInt(step3.min_attackers)
-      : undefined;
-  filters.maxAttackers =
-    step3.max_attackers && !isNaN(parseInt(step3.max_attackers))
-      ? parseInt(step3.max_attackers)
-      : undefined;
-  if (securityClass) {
-    filters.securityClass = securityClass.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  for (const field of filterLogicFieldsMaster) {
+    let val = cache[field.inputKey];
+    if (field.idOnly) {
+      if (val) {
+        if (field.key === 'distanceFromSystemId') {
+          filters[field.key] = /^\d+$/.test(val) ? Number(val) : undefined;
+        } else {
+          const arr = parseIdArray(val);
+          if (arr.length) filters[field.key] = arr;
+        }
+      }
+    } else if (field.key === 'securityClass') {
+      if (val) filters.securityClass = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    } else if (field.key === 'maxDistanceLy') {
+      if (val && !isNaN(Number(val))) filters.maxDistanceLy = Number(val);
+    } else if (field.key === 'minValue' || field.key === 'maxValue') {
+      if (val && !isNaN(parseFloat(val.replace(/,/g, '')))) filters[field.key] = parseFloat(val.replace(/,/g, ''));
+    } else if (field.key === 'minAttackers' || field.key === 'maxAttackers') {
+      if (val && !isNaN(parseInt(val))) filters[field.key] = parseInt(val);
+    }
   }
-  if (distanceFromSystemId && /^\d+$/.test(distanceFromSystemId)) {
-    filters.distanceFromSystemId = Number(distanceFromSystemId);
-  }
-  if (maxDistanceLy && !isNaN(Number(maxDistanceLy))) {
-    filters.maxDistanceLy = Number(maxDistanceLy);
-  }
-  // Remove empty array fields so blank fields are ignored during filter matching
-  Object.keys(filters).forEach(key => {
-    if (Array.isArray(filters[key]) && filters[key].length === 0) delete filters[key];
-  });
   return filters;
 }
 
@@ -138,11 +124,11 @@ module.exports = {
       const feedNameRaw = interaction.options.getString('feedname');
       const feedName = feedNameRaw ? feedNameRaw.trim() : '';
       if (!feedName) {
-        await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
+        await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', flags: 1 << 6 });
         return;
       }
       if (feedExists(interaction.channel.id, feedName)) {
-        await interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
+        await interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, flags: 1 << 6 });
         return;
       }
 
@@ -158,6 +144,10 @@ module.exports = {
         { label: 'Ship Type(s)', value: 'shiptypes' },
         { label: 'System Security Class', value: 'security_class' },
         { label: 'Max Lightyears from System', value: 'distance_from_system' },
+        { label: 'Minimum ISK', value: 'min_isk' },
+        { label: 'Maximum ISK', value: 'max_isk' },
+        { label: 'Minimum Attackers', value: 'min_attackers' },
+        { label: 'Maximum Attackers', value: 'max_attackers' },
         { label: 'Done - no more filters', value: 'done' }
       ];
 
@@ -178,7 +168,7 @@ module.exports = {
               .setMaxValues(1)
           )
         ],
-        ephemeral: true,
+        flags: 1 << 6,
       });
 
       let doneSelectingFilters = false;
@@ -189,79 +179,82 @@ module.exports = {
         });
 
         if (!selectInt.replied && !selectInt.deferred) {
-          await selectInt.deferReply({ ephemeral: true });
+          await selectInt.deferReply({ flags: 1 << 6 });
         }
 
         const selected = selectInt.values[0];
         if (selected === 'done') {
-          await selectInt.followUp({ content: 'No more filters selected.', ephemeral: true });
+          await selectInt.followUp({ content: 'No more filters selected.', flags: 1 << 6 });
           doneSelectingFilters = true;
           break;
-        } else {
-          if (!selectedFilters.includes(selected)) {
-            selectedFilters.push(selected);
-            cache = addfeedCache.get(cacheKey) || {};
-            cache.selectedFilters = selectedFilters;
-            addfeedCache.set(cacheKey, cache);
+        } else if (!selectedFilters.includes(selected)) {
+          selectedFilters.push(selected);
+          cache = addfeedCache.get(cacheKey) || {};
+          cache.selectedFilters = selectedFilters;
+          addfeedCache.set(cacheKey, cache);
 
-            const fieldDef = filterLogicFieldsMaster.find(o => o.inputKey === selected);
-            let prompt;
-            let idOnly = false;
-            if (
-              [
-                'corporations',
-                'characters',
-                'alliances',
-                'regions',
-                'attacker_corporations',
-                'attacker_characters',
-                'attacker_alliances',
-                'systems',
-                'shiptypes'
-              ].includes(selected)
-            ) {
-              prompt = `Enter numeric ID(s) for **${fieldDef.label}** (comma-separated, no names allowed, leave blank for none):`;
-              idOnly = true;
-              await promptForText(selectInt, prompt, cacheKey, selected, true, idOnly);
-            } else if (selected === 'security_class') {
-              const securityRow = new ActionRowBuilder().addComponents(
-                new StringSelectMenuBuilder()
-                  .setCustomId('addfeed-securityclass')
-                  .setPlaceholder('Select system security class')
-                  .addOptions([
-                    { label: 'High Sec', value: 'highsec' },
-                    { label: 'Low Sec', value: 'lowsec' },
-                    { label: 'Null Sec', value: 'nullsec' },
-                    { label: 'Wormhole', value: 'wh' }
-                  ])
-                  .setMinValues(1).setMaxValues(4)
-              );
-              await selectInt.followUp({
-                content: 'Select one or more system security classes:',
-                components: [securityRow],
-                ephemeral: true
-              });
-              const secInt = await interaction.channel.awaitMessageComponent({
-                filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-securityclass',
-                time: 60000
-              });
-              if (!secInt.replied && !secInt.deferred) {
-                await secInt.deferReply({ ephemeral: true });
-              }
-              cache = addfeedCache.get(cacheKey) || {};
-              cache['security_class'] = secInt.values.join(',');
-              addfeedCache.set(cacheKey, cache);
-              await secInt.followUp({ content: `Selected security classes: ${secInt.values.join(', ')}`, ephemeral: true });
-            } else if (selected === 'distance_from_system') {
-              await promptForText(selectInt, 'Enter the numeric system ID to measure from:', cacheKey, 'distance_from_system_id', false, true);
-              await promptForText(selectInt, 'Enter the maximum distance in lightyears (e.g. 10):', cacheKey, 'max_distance_ly', false);
-            } else {
-              prompt = `Enter value(s) for **${fieldDef ? fieldDef.label : selected}** (comma-separated, or leave blank for none):`;
-              await promptForText(selectInt, prompt, cacheKey, selected, true);
+          const fieldDef = filterLogicFieldsMaster.find(o => o.inputKey === selected || o.inputKey === selected.replace(/^min_|^max_/, ''));
+          let prompt;
+          let idOnly = fieldDef ? fieldDef.idOnly : false;
+
+          if (
+            [
+              'corporations',
+              'characters',
+              'alliances',
+              'regions',
+              'attacker_corporations',
+              'attacker_characters',
+              'attacker_alliances',
+              'systems',
+              'shiptypes'
+            ].includes(selected)
+          ) {
+            prompt = `Enter numeric ID(s) for **${fieldDef.label}** (comma-separated, no names allowed, leave blank for none):`;
+            await promptForText(selectInt, prompt, cacheKey, selected, true, true);
+          } else if (selected === 'security_class') {
+            const securityRow = new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId('addfeed-securityclass')
+                .setPlaceholder('Select system security class')
+                .addOptions([
+                  { label: 'High Sec', value: 'highsec' },
+                  { label: 'Low Sec', value: 'lowsec' },
+                  { label: 'Null Sec', value: 'nullsec' },
+                  { label: 'Wormhole', value: 'wh' }
+                ])
+                .setMinValues(1).setMaxValues(4)
+            );
+            await selectInt.followUp({
+              content: 'Select one or more system security classes:',
+              components: [securityRow],
+              flags: 1 << 6
+            });
+            const secInt = await interaction.channel.awaitMessageComponent({
+              filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-securityclass',
+              time: 60000
+            });
+            if (!secInt.replied && !secInt.deferred) {
+              await secInt.deferReply({ flags: 1 << 6 });
             }
+            cache = addfeedCache.get(cacheKey) || {};
+            cache['security_class'] = secInt.values.join(',');
+            addfeedCache.set(cacheKey, cache);
+            await secInt.followUp({ content: `Selected security classes: ${secInt.values.join(', ')}`, flags: 1 << 6 });
+          } else if (selected === 'distance_from_system') {
+            await promptForText(selectInt, 'Enter the numeric system ID to measure from:', cacheKey, 'distance_from_system_id', false, true);
+            await promptForText(selectInt, 'Enter the maximum distance in lightyears (e.g. 10):', cacheKey, 'max_distance_ly', false);
+          } else if (
+            ['min_isk', 'max_isk', 'min_attackers', 'max_attackers'].includes(selected)
+          ) {
+            prompt = `Enter value for **${fieldDef.label}** (leave blank for none):`;
+            await promptForText(selectInt, prompt, cacheKey, selected, true, false);
           } else {
-            await selectInt.followUp({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
+            prompt = `Enter value(s) for **${fieldDef ? fieldDef.label : selected}** (comma-separated, or leave blank for none):`;
+            await promptForText(selectInt, prompt, cacheKey, selected, true);
           }
+        } else {
+          await selectInt.followUp({ content: `You already selected this filter. Please choose a different one.`, flags: 1 << 6 });
         }
         const remainingOptions = allFilterChoices.filter(opt => !selectedFilters.includes(opt.value) || opt.value === 'done');
         if (!doneSelectingFilters) {
@@ -277,7 +270,7 @@ module.exports = {
                   .setMaxValues(1)
               )
             ],
-            ephemeral: true,
+            flags: 1 << 6,
           });
         }
       }
@@ -285,56 +278,19 @@ module.exports = {
       // Get final cache for user after all prompts
       const cacheFinal = addfeedCache.get(cacheKey) || {};
 
-      await promptForText(interaction, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
-      await promptForText(interaction, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
-      await promptForText(interaction, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
-      await promptForText(interaction, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
-
-      // Re-fetch cache after last prompts
-      const cacheFinal2 = addfeedCache.get(cacheKey) || {};
-
-      const step1 = {
-        feedName: cacheFinal2.feedName,
-        corporations: cacheFinal2.corporations || '',
-        characters: cacheFinal2.characters || '',
-        alliances: cacheFinal2.alliances || '',
-        regions: cacheFinal2.regions || ''
-      };
-      const step2 = {
-        attacker_corporations: cacheFinal2.attacker_corporations || '',
-        attacker_characters: cacheFinal2.attacker_characters || '',
-        attacker_alliances: cacheFinal2.attacker_alliances || '',
-        systems: cacheFinal2.systems || '',
-        shiptypes: cacheFinal2.shiptypes || ''
-      };
-      const step3 = {
-        min_isk: cacheFinal2.min_isk || '',
-        max_isk: cacheFinal2.max_isk || '',
-        min_attackers: cacheFinal2.min_attackers || '',
-        max_attackers: cacheFinal2.max_attackers || ''
-      };
-      const securityClass = cacheFinal2.security_class || '';
-      const distanceFromSystemId = cacheFinal2.distance_from_system_id || '';
-      const maxDistanceLy = cacheFinal2.max_distance_ly || '';
-
-      const filters = buildFilterObject(
-        step1,
-        step2,
-        step3,
-        securityClass,
-        distanceFromSystemId,
-        maxDistanceLy
-      );
+      // Build the filter object from ALL cache entries
+      const filters = buildFilterObject(cacheFinal);
+      console.log("Saving feed:", interaction.channel.id, feedName, filters);
       setFeed(interaction.channel.id, feedName, { filters });
-      await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
+      await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, flags: 1 << 6 });
       addfeedCache.delete(cacheKey);
     } catch (err) {
       console.error('Error in addfeed wizard:', err);
       try {
         if (interaction.replied || interaction.deferred) {
-          await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
+          await interaction.followUp({ content: 'An error occurred. Please try again.', flags: 1 << 6 });
         } else {
-          await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true });
+          await interaction.reply({ content: 'An error occurred. Please try again.', flags: 1 << 6 });
         }
       } catch {}
     }
