@@ -1,4 +1,4 @@
-const { calculateLyDistance } = require('./eveuniverse');
+const { calculateLyDistance } = require('../eveuniverse');
 
 /**
  * Filter a normalized killmail according to filters.
