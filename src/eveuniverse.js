@@ -1,4 +1,4 @@
-// EVE Universe Entity Resolver using batch POST endpoints for best practice
+// EVE Universe Entity Resolver using batch POST endpoints and direct ESI for best practice
 
 let fetchFn;
 try {
@@ -75,9 +75,13 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 
 async function resolveById(id, category) {
   if (!id || !category) return null;
-  const ckey = cacheKey(category, id);
   const cached = getCache(category, id);
   if (cached) return cached;
+  // Ships, systems, and regions have direct endpoints for more data
+  if (category === 'shiptype') return await resolveShipType(id);
+  if (category === 'solar_system') return await resolveSystem(id);
+  if (category === 'region') return await resolveRegion(id);
+  // Batch names for others
   const results = await idsToNames([id]);
   const entity = results.find(e => e.category === category && e.id == id);
   if (entity) {
@@ -91,7 +95,6 @@ async function resolveById(id, category) {
 
 async function resolveByName(name, category) {
   if (!name || !category) return null;
-  const ckey = cacheKey(category, name.toLowerCase());
   const cached = getCache(category, name.toLowerCase());
   if (cached) return cached;
   const ids = await namesToIds([name]);
@@ -129,19 +132,42 @@ async function resolveCharacter(input) {
 }
 async function resolveRegion(input) {
   if (!input) return null;
-  if (/^\d+$/.test(input)) return await resolveById(input, 'region');
+  if (/^\d+$/.test(input)) {
+    // /universe/regions/{region_id}/
+    const cached = getCache('region', input);
+    if (cached) return cached;
+    const url = `${ESI_BASE}/universe/regions/${input}/`;
+    const data = await fetchWithRetry(url);
+    if (data && data.region_id) {
+      const result = { id: data.region_id, name: data.name };
+      setCache('region', input, result);
+      return result;
+    }
+    return null;
+  }
   return await resolveByName(input, 'region');
 }
 async function resolveSystem(input) {
   if (!input) return null;
-  if (/^\d+$/.test(input)) return await resolveById(input, 'solar_system');
+  if (/^\d+$/.test(input)) {
+    // /universe/systems/{system_id}/
+    const cached = getCache('solar_system', input);
+    if (cached) return cached;
+    const url = `${ESI_BASE}/universe/systems/${input}/`;
+    const data = await fetchWithRetry(url);
+    if (data && data.solar_system_id) {
+      const result = { id: data.solar_system_id, name: data.name, region_id: data.region_id };
+      setCache('solar_system', input, result);
+      return result;
+    }
+    return null;
+  }
   return await resolveByName(input, 'solar_system');
 }
 async function resolveShipType(input) {
   if (!input) return null;
   if (/^\d+$/.test(input)) {
     // /universe/types/{type_id}/ to check for category_id === 6 (ship)
-    const ckey = cacheKey('shiptype', input);
     const cached = getCache('shiptype', input);
     if (cached) return cached;
     const url = `${ESI_BASE}/universe/types/${input}/`;
@@ -154,7 +180,6 @@ async function resolveShipType(input) {
     return null;
   }
   // For name, use inventory_type
-  const ckey = cacheKey('shiptype', input.toLowerCase());
   const cached = getCache('shiptype', input.toLowerCase());
   if (cached) return cached;
   // Try with namesToIds first
