@@ -3,54 +3,50 @@ const { calculateLyDistance } = require('../eveuniverse');
 /**
  * Filter a normalized killmail according to filters.
  * Only non-empty filter fields are applied.
+ * This version uses strict matching: if a filter array is present and non-empty,
+ * the killmail must match at least one value in the array (no logic modes).
  * @param {Object} killmail
  * @param {Object} filters
  * @returns {Promise<boolean>}
  */
 async function filterKillmail(killmail, filters) {
-  function matchIds(arr, target, mode = 'OR') {
-    if (!arr || arr.length === 0) return true; // Ignore blank filters
-    if (!target) return false;
+  // Helper: returns true if the filter is empty (i.e. not used), or if target matches any in arr.
+  function strictMatch(arr, target) {
+    if (!arr || arr.length === 0) return true; // No filter, always match
+    if (target == null) return false;
     if (Array.isArray(target)) {
-      if (mode === 'AND') return arr.every(id => target.includes(id));
-      if (mode === 'OR') return arr.some(id => target.includes(id));
-      if (mode === 'IF') return arr.length === 0 || arr.some(id => target.includes(id));
-      return false;
-    } else {
-      if (mode === 'AND') return arr.every(id => id === target);
-      if (mode === 'OR') return arr.includes(target);
-      if (mode === 'IF') return arr.length === 0 || arr.includes(target);
-      return false;
+      return arr.some(id => target.includes(id));
     }
+    return arr.includes(target);
   }
 
-  // Only apply filters if the array is non-empty
+  // Victim fields
   if (filters.corporationIds?.length > 0 &&
-      !matchIds(filters.corporationIds, killmail.victim.corporation_id, filters.corporationIdsMode)) return false;
+      !strictMatch(filters.corporationIds, killmail.victim.corporation_id)) return false;
   if (filters.characterIds?.length > 0 &&
-      !matchIds(filters.characterIds, killmail.victim.character_id, filters.characterIdsMode)) return false;
+      !strictMatch(filters.characterIds, killmail.victim.character_id)) return false;
   if (filters.allianceIds?.length > 0 &&
-      !matchIds(filters.allianceIds, killmail.victim.alliance_id, filters.allianceIdsMode)) return false;
+      !strictMatch(filters.allianceIds, killmail.victim.alliance_id)) return false;
   if (filters.regionIds?.length > 0 &&
-      !matchIds(filters.regionIds, killmail.region_id, filters.regionIdsMode)) return false;
+      !strictMatch(filters.regionIds, killmail.region_id)) return false;
   if (filters.systemIds?.length > 0 &&
-      !matchIds(filters.systemIds, killmail.solar_system_id, filters.systemIdsMode)) return false;
+      !strictMatch(filters.systemIds, killmail.solar_system_id)) return false;
   if (filters.shipTypeIds?.length > 0 &&
-      !matchIds(filters.shipTypeIds, killmail.victim.ship_type_id, filters.shipTypeIdsMode)) return false;
+      !strictMatch(filters.shipTypeIds, killmail.victim.ship_type_id)) return false;
 
   // Attacker-side filters (arrays of attackers)
   const attackers = killmail.attackers || [];
   if (filters.attackerCorporationIds?.length > 0) {
     const attackerCorpIds = attackers.map(a => a.corporation_id).filter(Boolean);
-    if (!matchIds(filters.attackerCorporationIds, attackerCorpIds, filters.attackerCorporationIdsMode)) return false;
+    if (!strictMatch(filters.attackerCorporationIds, attackerCorpIds)) return false;
   }
   if (filters.attackerCharacterIds?.length > 0) {
     const attackerCharIds = attackers.map(a => a.character_id).filter(Boolean);
-    if (!matchIds(filters.attackerCharacterIds, attackerCharIds, filters.attackerCharacterIdsMode)) return false;
+    if (!strictMatch(filters.attackerCharacterIds, attackerCharIds)) return false;
   }
   if (filters.attackerAllianceIds?.length > 0) {
     const attackerAllianceIds = attackers.map(a => a.alliance_id).filter(Boolean);
-    if (!matchIds(filters.attackerAllianceIds, attackerAllianceIds, filters.attackerAllianceIdsMode)) return false;
+    if (!strictMatch(filters.attackerAllianceIds, attackerAllianceIds)) return false;
   }
 
   // ISK value/attacker count filters (only if defined)
