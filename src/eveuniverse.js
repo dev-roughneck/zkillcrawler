@@ -98,6 +98,10 @@ async function resolveByName(name, category) {
   const cached = getCache(category, name.toLowerCase());
   if (cached) return cached;
   const ids = await namesToIds([name]);
+  // DEBUG: Log what ESI returned for troubleshooting
+  if (!ids || !ids[category + 's'] || ids[category + 's'].length === 0) {
+    console.warn(`[EVEU] namesToIds: No ${category} found for "${name}"`, ids);
+  }
   if (ids && ids[category + 's'] && ids[category + 's'].length > 0) {
     const entity = ids[category + 's'][0];
     setCache(category, name.toLowerCase(), { id: entity.id, name: entity.name });
@@ -106,6 +110,9 @@ async function resolveByName(name, category) {
   // Fallback to /search for fuzzy
   const url = `${ESI_BASE}/search/?categories=${category}&search=${encodeURIComponent(name)}&strict=false`;
   const data = await fetchWithRetry(url);
+  if (!data || !data[category] || data[category].length === 0) {
+    console.warn(`[EVEU] /search: No ${category} match for "${name}"`, data);
+  }
   if (data && data[category] && data[category].length > 0) {
     const id = data[category][0];
     return await resolveById(id, category);
@@ -213,7 +220,7 @@ async function resolveShipType(input) {
 
 // --- Bulk resolve helpers ---
 async function resolveIds(input, type) {
-  if (!input) return [];
+  if (!input || typeof input !== 'string') return [];
   const entries = input.split(',').map(s => s.trim()).filter(Boolean);
   if (entries.length === 0) return [];
   const ids = [];
@@ -235,7 +242,11 @@ async function resolveIds(input, type) {
       default:
         obj = null;
     }
-    if (obj && obj.id) ids.push(obj.id);
+    if (!obj) {
+      console.warn(`[EVEU] Could not resolve ${type}: "${entry}"`);
+    } else if (obj.id) {
+      ids.push(obj.id);
+    }
   }
   return ids;
 }
