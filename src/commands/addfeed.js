@@ -313,7 +313,7 @@ module.exports = {
         }
       }
 
-      // Get final cache for user
+      // Get final cache for user after all prompts
       const cacheFinal = addfeedCache.get(cacheKey) || {};
 
       await promptForText(interaction, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
