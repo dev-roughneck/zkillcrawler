@@ -36,7 +36,8 @@ function validateFilters(filters) {
     'attackerAllianceIds',
     'regionIds',
     'systemIds',
-    'shipTypeIds'
+    'shipTypeIds',
+    'attackerShipTypeIds'
   ].forEach(key => {
     if (Array.isArray(filters[key])) {
       valid[key] = filters[key].filter(id => typeof id === 'number');
