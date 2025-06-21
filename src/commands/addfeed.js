@@ -1,12 +1,9 @@
 const {
   SlashCommandBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  StringSelectMenuBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  StringSelectMenuBuilder
 } = require('discord.js');
 const { setFeed, feedExists } = require('../feeds');
 const { resolveIds } = require('../eveuniverse');
@@ -47,6 +44,26 @@ function sessionExpired(cache) {
   return Date.now() - cache.createdAt > SESSION_TIMEOUT_MS;
 }
 
+async function promptForText(interaction, question, cacheKey, fieldKey) {
+  await interaction.followUp({
+    content: question,
+    ephemeral: true
+  });
+  const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
+  try {
+    const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+    const value = collected.first().content.trim();
+    const cache = addfeedCache.get(cacheKey);
+    cache[fieldKey] = value;
+    addfeedCache.set(cacheKey, cache);
+    return value;
+  } catch {
+    await interaction.followUp({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+    addfeedCache.delete(cacheKey);
+    throw new Error('Input timed out');
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('addfeed')
@@ -54,356 +71,138 @@ module.exports = {
 
   async execute(interaction) {
     try {
-      const modal = new ModalBuilder()
-        .setCustomId('addfeed-modal-step1')
-        .setTitle('Add zKillboard Feed (1/4)')
-        .addComponents(
+      // Step 1: Prompt for Feed Name
+      await interaction.reply({
+        content: 'Enter a unique feed name for this channel:',
+        ephemeral: true
+      });
+      const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
+      let feedName;
+      try {
+        const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+        feedName = collected.first().content.trim();
+      } catch {
+        await interaction.followUp({ content: 'Timed out waiting for feed name. Please run /addfeed again.', ephemeral: true });
+        return;
+      }
+      if (!feedName) {
+        await interaction.followUp({ content: 'Feed name is required.', ephemeral: true });
+        return;
+      }
+      if (feedExists(interaction.channel.id, feedName)) {
+        await interaction.followUp({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
+        return;
+      }
+      // Step 2: Present select menu for which filters to set
+      const filterOptions = [
+        { label: 'Victim Corp(s)', value: 'corporations' },
+        { label: 'Victim Character(s)', value: 'characters' },
+        { label: 'Victim Alliance(s)', value: 'alliances' },
+        { label: 'Region(s)', value: 'regions' },
+        { label: 'Attacker Corp(s)', value: 'attacker_corporations' },
+        { label: 'Attacker Character(s)', value: 'attacker_characters' },
+        { label: 'Attacker Alliance(s)', value: 'attacker_alliances' },
+        { label: 'System(s)', value: 'systems' },
+        { label: 'Ship Type(s)', value: 'shiptypes' }
+      ];
+      await interaction.followUp({
+        content: 'Select the filters you wish to set for this feed (you will provide values for each):',
+        components: [
           new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('feedname')
-              .setLabel('Feed Name (unique)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(true)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('corporations')
-              .setLabel('Victim Corp(s) (name or ID, comma-sep)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('characters')
-              .setLabel('Victim Character(s) (name or ID, comma-sep)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('alliances')
-              .setLabel('Victim Alliance(s) (name or ID, comma-sep)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
-          ),
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-              .setCustomId('regions')
-              .setLabel('Region(s) (name or ID, comma-sep)')
-              .setStyle(TextInputStyle.Short)
-              .setRequired(false)
+            new StringSelectMenuBuilder()
+              .setCustomId('addfeed-selectfilters')
+              .setPlaceholder('Select filters')
+              .addOptions(filterOptions)
+              .setMinValues(1)
           )
-        );
-      await interaction.showModal(modal);
-    } catch (err) {
-      if (!interaction.replied && !interaction.deferred) {
-        try { await interaction.reply({content: 'Error: Could not show modal', ephemeral: true}); } catch {}
-      }
-    }
-  },
-
-  async handleModal(interaction) {
-    try {
-      // STEP 1: Victim/Location Filters
-      if (interaction.customId === 'addfeed-modal-step1') {
-        const feedName = interaction.fields.getTextInputValue('feedname').trim();
-        if (!feedName) {
-          return interaction.reply({ content: 'Feed name is required.', flags: 1 << 6 });
-        }
-        if (feedExists(interaction.channel.id, feedName)) {
-          return interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, flags: 1 << 6 });
-        }
-
-        const step1 = {
-          feedName,
-          corporations: interaction.fields.getTextInputValue('corporations').trim(),
-          characters: interaction.fields.getTextInputValue('characters').trim(),
-          alliances: interaction.fields.getTextInputValue('alliances').trim(),
-          regions: interaction.fields.getTextInputValue('regions').trim()
-        };
-        const cacheKey = `${interaction.user.id}-${Date.now()}`;
-        addfeedCache.set(cacheKey, { step1, createdAt: Date.now() });
-
-        return interaction.reply({
-          content: `Basic victim and region filters set for \`${feedName}\`. Click **Next** to set attacker/location filters.`,
-          flags: 1 << 6,
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`addfeed-next-step2|${cacheKey}`)
-                .setLabel('Next')
-                .setStyle(ButtonStyle.Primary)
-            )
-          ]
-        });
-      }
-
-      // STEP 2: Attacker/Location Filters
-      if (interaction.customId.startsWith('addfeed-modal-step2|')) {
-        const [ , cacheKey ] = interaction.customId.split('|');
-        const cache = addfeedCache.get(cacheKey);
-        if (sessionExpired(cache)) {
-          addfeedCache.delete(cacheKey);
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-        if (!cache || !cache.step1) {
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-        const step2 = {
-          attacker_corporations: interaction.fields.getTextInputValue('attacker_corporations').trim(),
-          attacker_characters: interaction.fields.getTextInputValue('attacker_characters').trim(),
-          attacker_alliances: interaction.fields.getTextInputValue('attacker_alliances').trim(),
-          systems: interaction.fields.getTextInputValue('systems').trim(),
-          shiptypes: interaction.fields.getTextInputValue('shiptypes').trim()
-        };
-        addfeedCache.set(cacheKey, { ...cache, step2, createdAt: cache.createdAt });
-
-        return interaction.reply({
-          content: `Attacker and location filters set. Now select AND/OR/IF logic for each filter.`,
-          flags: 1 << 6,
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`addfeed-next-step3|${cacheKey}`)
-                .setLabel('Set Filter Logic')
-                .setStyle(ButtonStyle.Primary)
-            )
-          ]
-        });
-      }
-
-      // STEP 4: ISK/attacker limits
-      if (interaction.customId.startsWith('addfeed-modal-step3|')) {
-        const [ , cacheKey ] = interaction.customId.split('|');
-        const cache = addfeedCache.get(cacheKey);
-        if (sessionExpired(cache)) {
-          addfeedCache.delete(cacheKey);
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-        if (!cache || !cache.step1 || !cache.step2) {
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-        const step3 = {
-          min_isk: interaction.fields.getTextInputValue('min_isk').trim(),
-          max_isk: interaction.fields.getTextInputValue('max_isk').trim(),
-          min_attackers: interaction.fields.getTextInputValue('min_attackers').trim(),
-          max_attackers: interaction.fields.getTextInputValue('max_attackers').trim()
-        };
-        addfeedCache.set(cacheKey, { ...cache, step3, createdAt: cache.createdAt });
-
-        const { step1, step2, logicModes, activeLogicFields } = addfeedCache.get(cacheKey);
-        const feedName = step1.feedName;
-        const filters = await buildFilterObject(step1, step2, step3, logicModes, activeLogicFields);
-
-        setFeed(interaction.channel.id, feedName, { filters });
-        addfeedCache.delete(cacheKey);
-
-        return interaction.reply({ content: `Feed \`${feedName}\` created!`, flags: 1 << 6 });
-      }
-    } catch (err) {
-      console.error('Error in handleModal:', err);
-      if (!interaction.replied && !interaction.deferred) {
-        try { await interaction.reply({content: 'An error occurred. Please try again.', ephemeral: true}); } catch {}
-      }
-    }
-  },
-
-  async handleButton(interaction) {
-    try {
-      const [ , cacheKey ] = interaction.customId.split('|');
-      const cache = addfeedCache.get(cacheKey);
-      if (sessionExpired(cache)) {
-        addfeedCache.delete(cacheKey);
-        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-      }
-
-      // Step 2: Attacker/location modal
-      if (interaction.customId.startsWith('addfeed-next-step2|')) {
-        if (!cache || !cache.step1) {
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-
-        const modal = new ModalBuilder()
-          .setCustomId(`addfeed-modal-step2|${cacheKey}`)
-          .setTitle('Add zKillboard Feed (2/4)')
-          .addComponents(
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('attacker_corporations')
-                .setLabel('Attacker Corp(s) (name or ID, comma-sep)')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('attacker_characters')
-                .setLabel('Attacker Character(s) (name or ID, comma-sep)')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('attacker_alliances')
-                .setLabel('Attacker Alliance(s) (name or ID, comma-sep)')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('systems')
-                .setLabel('System(s) (name or ID, comma-sep)')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('shiptypes')
-                .setLabel('Ship Type(s) (name or ID, comma-sep)')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            )
-          );
-        return interaction.showModal(modal);
-      }
-
-      // Step 3: Prompt logic for one non-empty filter at a time
-      if (interaction.customId.startsWith('addfeed-next-step3|')) {
-        if (!cache || !cache.step1 || !cache.step2) {
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-
-        const step1 = cache.step1, step2 = cache.step2;
-        const logicFields = filterLogicFieldsMaster.filter(f => {
-          if (f.step === 1) return step1[f.inputKey] && step1[f.inputKey].length > 0;
-          if (f.step === 2) return step2[f.inputKey] && step2[f.inputKey].length > 0;
-          return false;
-        });
-
-        if (logicFields.length === 0) {
-          return interaction.reply({
-            content: 'No filters set that need logic selection. Proceeding to the next step.',
-            flags: 1 << 6,
-            components: [
-              new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                  .setCustomId(`addfeed-next-step4|${cacheKey}`)
-                  .setLabel('Next')
-                  .setStyle(ButtonStyle.Primary)
-              )
-            ]
-          });
-        }
-
-        cache.activeLogicFields = logicFields;
-        cache.logicProgressIndex = 0;
-        addfeedCache.set(cacheKey, cache);
-
-        const field = logicFields[0];
-        return interaction.reply({
-          content: `Select logic for **${field.label}**:`,
-          flags: 1 << 6,
-          components: [
-            makeLogicSelect(`logicmode-${field.key}|${cacheKey}`, field.label)
-          ]
-        });
-      }
-
-      // Step 4: ISK/attacker limits modal
-      if (interaction.customId.startsWith('addfeed-next-step4|')) {
-        if (!cache || !cache.step1 || !cache.step2) {
-          return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-        }
-        const modal = new ModalBuilder()
-          .setCustomId(`addfeed-modal-step3|${cacheKey}`)
-          .setTitle('Add zKillboard Feed (4/4)')
-          .addComponents(
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('min_isk')
-                .setLabel('Minimum ISK Value')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('max_isk')
-                .setLabel('Maximum ISK Value')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('min_attackers')
-                .setLabel('Minimum Attackers')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            ),
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder()
-                .setCustomId('max_attackers')
-                .setLabel('Maximum Attackers')
-                .setStyle(TextInputStyle.Short)
-                .setRequired(false)
-            )
-          );
-        return interaction.showModal(modal);
-      }
-    } catch (err) {
-      console.error('Error in handleButton:', err);
-      if (!interaction.replied && !interaction.deferred) {
-        try { await interaction.reply({content: 'An error occurred. Please try again.', ephemeral: true}); } catch {}
-      }
-    }
-  },
-
-  async handleSelect(interaction) {
-    try {
-      const [prefix, cacheKey] = interaction.customId.split('|');
-      const filterKey = prefix.replace('logicmode-', '');
-      const cache = addfeedCache.get(cacheKey);
-      if (sessionExpired(cache)) {
-        addfeedCache.delete(cacheKey);
-        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-      }
-      if (!cache) {
-        return interaction.reply({ content: 'Session expired. Please restart /addfeed.', flags: 1 << 6 });
-      }
-      if (!cache.logicModes) cache.logicModes = {};
-      cache.logicModes[filterKey] = interaction.values[0];
-
-      const logicFields = cache.activeLogicFields || [];
-      let idx = (cache.logicProgressIndex || 0) + 1;
-      cache.logicProgressIndex = idx;
+        ],
+        ephemeral: true,
+      });
+      // Wait for select menu interaction
+      const selectInt = await interaction.channel.awaitMessageComponent({ filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters', time: 60000 });
+      const selectedFilters = selectInt.values;
+      // Cache initial state
+      const cacheKey = `${interaction.user.id}-${Date.now()}`;
+      const cache = {
+        feedName,
+        selectedFilters,
+        createdAt: Date.now()
+      };
       addfeedCache.set(cacheKey, cache);
+      await selectInt.reply({ content: `You selected: ${selectedFilters.map(s => filterOptions.find(o => o.value === s).label).join(', ')}`, ephemeral: true });
 
-      if (idx < logicFields.length) {
-        const field = logicFields[idx];
-        return interaction.reply({
-          content: `Select logic for **${field.label}**:`,
-          flags: 1 << 6,
-          components: [
-            makeLogicSelect(`logicmode-${field.key}|${cacheKey}`, field.label)
-          ]
-        });
-      } else {
-        return interaction.reply({
-          content: 'All filter logics selected. Click **Next** to set ISK/attacker limits and save.',
-          flags: 1 << 6,
-          components: [
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`addfeed-next-step4|${cacheKey}`)
-                .setLabel('Next')
-                .setStyle(ButtonStyle.Primary)
-            )
-          ]
-        });
+      // Step 3: Prompt for each selected filter value (text-based)
+      for (const filterField of selectedFilters) {
+        const label = filterOptions.find(o => o.value === filterField).label;
+        let prompt = `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`;
+        try {
+          await promptForText(selectInt, prompt, cacheKey, filterField);
+        } catch {
+          return; // Already handled by promptForText
+        }
       }
+
+      // Step 4: Prompt for ISK/attacker limits
+      let min_isk, max_isk, min_attackers, max_attackers;
+      try {
+        min_isk = await promptForText(selectInt, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk');
+        max_isk = await promptForText(selectInt, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk');
+        min_attackers = await promptForText(selectInt, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers');
+        max_attackers = await promptForText(selectInt, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers');
+      } catch {
+        return;
+      }
+
+      // Step 5: For each non-empty filter, ask for AND/OR/IF logic via select menu
+      const logicModes = {};
+      for (const filterField of selectedFilters) {
+        const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
+        if (!logicField) continue;
+        const logicSelectRow = makeLogicSelect(`logicmode-${logicField.key}|${cacheKey}`, logicField.label);
+        await selectInt.followUp({
+          content: `Select logic for **${logicField.label}**:`,
+          components: [logicSelectRow],
+          ephemeral: true
+        });
+        const logicInt = await interaction.channel.awaitMessageComponent({
+          filter: i => i.user.id === interaction.user.id && i.customId.startsWith(`logicmode-${logicField.key}|`),
+          time: 60000
+        });
+        logicModes[logicField.key] = logicInt.values[0];
+        await logicInt.reply({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
+      }
+
+      // Step 6: Build filter object and save
+      const cacheFinal = addfeedCache.get(cacheKey);
+      const step1 = {
+        feedName: cacheFinal.feedName,
+        corporations: cacheFinal.corporations || '',
+        characters: cacheFinal.characters || '',
+        alliances: cacheFinal.alliances || '',
+        regions: cacheFinal.regions || ''
+      };
+      const step2 = {
+        attacker_corporations: cacheFinal.attacker_corporations || '',
+        attacker_characters: cacheFinal.attacker_characters || '',
+        attacker_alliances: cacheFinal.attacker_alliances || '',
+        systems: cacheFinal.systems || '',
+        shiptypes: cacheFinal.shiptypes || ''
+      };
+      const step3 = {
+        min_isk: cacheFinal.min_isk || '',
+        max_isk: cacheFinal.max_isk || '',
+        min_attackers: cacheFinal.min_attackers || '',
+        max_attackers: cacheFinal.max_attackers || ''
+      };
+      const filters = await buildFilterObject(step1, step2, step3, logicModes, filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey)));
+      setFeed(interaction.channel.id, feedName, { filters });
+      addfeedCache.delete(cacheKey);
+      await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
     } catch (err) {
-      console.error('Error in handleSelect:', err);
-      if (!interaction.replied && !interaction.deferred) {
-        try { await interaction.reply({content: 'An error occurred processing your selection.', ephemeral: true}); } catch {}
-      }
+      console.error('Error in addfeed wizard:', err);
+      try {
+        await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
+      } catch {}
     }
   }
 };
@@ -438,10 +237,10 @@ async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFie
     }
   }
 
-  filters.minValue = parseFloat(step3.min_isk.replace(/,/g, '')) || undefined;
-  filters.maxValue = parseFloat(step3.max_isk.replace(/,/g, '')) || undefined;
-  filters.minAttackers = parseInt(step3.min_attackers) || undefined;
-  filters.maxAttackers = parseInt(step3.max_attackers) || undefined;
+  filters.minValue = step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, ''))) ? parseFloat(step3.min_isk.replace(/,/g, '')) : undefined;
+  filters.maxValue = step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, ''))) ? parseFloat(step3.max_isk.replace(/,/g, '')) : undefined;
+  filters.minAttackers = step3.min_attackers && !isNaN(parseInt(step3.min_attackers)) ? parseInt(step3.min_attackers) : undefined;
+  filters.maxAttackers = step3.max_attackers && !isNaN(parseInt(step3.max_attackers)) ? parseInt(step3.max_attackers) : undefined;
 
   return filters;
 }
