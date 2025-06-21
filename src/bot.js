@@ -35,8 +35,14 @@ client.once('ready', () => {
   // Start single RedisQ poller for all feeds
   listenToRedisQ(async (killmail) => {
     try {
-      // Only log that a killmail was received (no full payload)
-      console.log("Receiving a new killmail from RedisQ...");
+      // === NEW LOGGING: Log the full raw killmail as received ===
+      console.log("=== RAW KILLMAIL RECEIVED ===");
+      try {
+        console.log(JSON.stringify(killmail, null, 2));
+      } catch (e) {
+        console.log("Killmail log error:", e);
+      }
+      console.log("=============================");
 
       // --- Name resolution for victim, ship, system, corp, alliance ---
       const victim = killmail.killmail?.victim || {};
@@ -106,6 +112,8 @@ client.once('ready', () => {
       console.log("Loaded feeds:", feeds.map(f => f.feed_name).join(", "));
       for (const { channel_id, feed_name, filters } of feeds) {
         try {
+          // Extra debug: log the filters for this feed
+          console.log(`Feed: ${feed_name}, Channel: ${channel_id}, Filters:`, JSON.stringify(filters, null, 2));
           const passes = await applyFilters(killmail, filters);
           console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
           if (passes) {
