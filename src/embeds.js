@@ -4,8 +4,12 @@ const eveu = require('./eveuniverse');
 /**
  * Formats a killmail as a Discord Embed using a wide, compact, information-rich layout.
  * Shows: Victim (link, corp, alliance, ship), system (w/ region), ISK value, attackers, final blow, time, images.
+ * Now also shows system security class and (if present in filters) distance from reference system.
+ * @param {Object} killmail
+ * @param {Object} [filters] - (optional) Feed filters, to display reference system/distance if present
+ * @returns {EmbedBuilder}
  */
-async function formatKillmailEmbed(killmail) {
+async function formatKillmailEmbed(killmail, filters = null) {
   const victim = killmail.victim || {};
   const zkb = killmail.zkb || {};
   const attackers = killmail.attackers || [];
@@ -83,6 +87,35 @@ async function formatKillmailEmbed(killmail) {
       : system.name
     : "Unknown";
 
+  // System security status/class
+  let systemSec = typeof system?.security_status === 'number' ? system.security_status : null;
+  let secClass = "Unknown";
+  if (typeof systemSec === 'number') {
+    if (systemSec >= 0.5) secClass = 'High Sec';
+    else if (systemSec >= 0.1) secClass = 'Low Sec';
+    else if (systemSec > -0.99) secClass = 'Null Sec';
+    else secClass = 'Wormhole';
+  }
+
+  // If filters specify a reference system for LY filtering, show distance
+  let lyDistanceStr = null;
+  if (
+    filters &&
+    typeof filters.distanceFromSystemId === 'number' &&
+    typeof filters.maxDistanceLy === 'number' &&
+    system &&
+    system.id
+  ) {
+    try {
+      const dist = await eveu.calculateLyDistance(filters.distanceFromSystemId, system.id);
+      if (dist !== null) {
+        lyDistanceStr = `${dist.toFixed(2)} ly from ${filters.distanceFromSystemName || "reference system"}`;
+      }
+    } catch (err) {
+      lyDistanceStr = "Distance: error";
+    }
+  }
+
   // Final blow attacker section
   const attackerLink = finalAttackerChar
     ? `[${finalAttackerChar.name}](https://evewho.com/character/${finalAttackerChar.id})`
@@ -106,6 +139,7 @@ async function formatKillmailEmbed(killmail) {
       { name: 'Alliance', value: victimAlliance?.name || 'None', inline: true },
       { name: 'Ship', value: victimShip?.name || 'Unknown', inline: true },
       { name: 'System', value: systemStr, inline: true },
+      { name: 'Sec Class', value: secClass, inline: true },
       { name: 'ISK Value', value: iskValue, inline: true },
       { name: 'Attackers', value: attackers.length.toString(), inline: true },
       { name: 'Final Blow', value: finalBlowStr, inline: true },
@@ -113,6 +147,9 @@ async function formatKillmailEmbed(killmail) {
     )
     .setFooter({ text: "zKillboard.com", iconURL: "https://zkillboard.com/img/favicon.png" });
 
+  if (lyDistanceStr) {
+    embed.addFields({ name: 'Distance', value: lyDistanceStr, inline: true });
+  }
   if (shipImage) embed.setThumbnail(shipImage);
   if (logo) embed.setImage(logo);
 
