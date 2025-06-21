@@ -3,7 +3,7 @@ const {
   StringSelectMenuBuilder,
   ActionRowBuilder,
 } = require('discord.js');
-const { setFeed, feedconst {
+const {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   ActionRowBuilder,
