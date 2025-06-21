@@ -8,10 +8,19 @@ async function listenToRedisQ(handler) {
   const queueId = 'misery engine'; // your queue ID
   while (true) {
     try {
-      const response = await fetch('https://zkillredisq.stream/listen.php?queueID=' + encodeURIComponent(queueId));
+      const response = await fetch('https://zkillredisq.stream/listen.php?queueID=' + encodeURIComponent(queueId), {
+        timeout: 65000 // set a timeout in case the server hangs
+      });
+      if (!response.ok) {
+        throw new Error(`[RedisQ] HTTP error: ${response.status}`);
+      }
       const data = await response.json();
       if (data && data.package && Object.keys(data.package).length > 0) {
-        await handler(data.package);
+        try {
+          await handler(data.package);
+        } catch (err) {
+          console.error('[RedisQ] Handler error:', err);
+        }
       }
     } catch (e) {
       console.error('[RedisQ] Error:', e);
