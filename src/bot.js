@@ -114,6 +114,8 @@ client.once('ready', () => {
         try {
           // Extra debug: log the filters for this feed
           console.log(`Feed: ${feed_name}, Channel: ${channel_id}, Filters:`, JSON.stringify(filters, null, 2));
+          // ADDITION: Log just the filters for clarity in debugging
+          console.log("FEED FILTERS:", JSON.stringify(filters, null, 2));
           const passes = await applyFilters(killmail, filters);
           console.log(`Feed ${feed_name} (channel ${channel_id}) filter result: ${passes}`);
           if (passes) {
