@@ -5,7 +5,6 @@ const {
 } = require('discord.js');
 const { setFeed, feedExists } = require('../feeds');
 
-// Add new filters
 const filterLogicFieldsMaster = [
   { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations', step: 1 },
   { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters', step: 1 },
@@ -16,7 +15,6 @@ const filterLogicFieldsMaster = [
   { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances', step: 2 },
   { key: 'systemIds', label: 'System(s)', inputKey: 'systems', step: 2 },
   { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes', step: 2 },
-  // New filters (logic not needed)
   { key: 'securityClass', label: 'System Security Class', inputKey: 'security_class', step: 2 },
   { key: 'distanceFromSystem', label: 'Max Lightyears from System', inputKey: 'distance_from_system', step: 2 },
 ];
@@ -39,7 +37,6 @@ function makeLogicSelect(customId, label, defaultValue = 'OR') {
 }
 
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false, idOnly = false) {
-  // Only send a question if provided and not empty
   let msg = question;
   if (idOnly) msg += '\n**Enter numeric ID(s) only, comma-separated. Names are not accepted.**';
   if (typeof msg === 'string' && msg.trim().length > 0) {
@@ -49,7 +46,6 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
       await interaction.followUp({ content: msg, ephemeral: true });
     }
   }
-
   const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
   try {
     const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
@@ -63,11 +59,13 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
       addfeedCache.delete(cacheKey);
       throw new Error('Input is empty');
     }
-    // Validate ID input if needed
     if (idOnly && value) {
       const parts = value.split(',').map(v => v.trim());
       if (!parts.every(v => /^\d+$/.test(v))) {
-        await interaction.followUp({ content: 'Only numeric ID(s) are allowed. Please try again.', ephemeral: true });
+        await interaction.followUp({
+          content: '❌ Only numeric ID(s) are allowed. Names are not accepted. Please look up the correct ID and try again.',
+          ephemeral: true
+        });
         addfeedCache.delete(cacheKey);
         throw new Error('Non-numeric input for ID-only field');
       }
@@ -98,7 +96,6 @@ module.exports = {
     ),
   async execute(interaction) {
     try {
-      // Step 1: Get feed name from slash command option
       const feedNameRaw = interaction.options.getString('feedname');
       const feedName = feedNameRaw ? feedNameRaw.trim() : '';
       if (!feedName) {
@@ -110,7 +107,6 @@ module.exports = {
         return;
       }
 
-      // --------- Multi-step filter selection loop ---------
       const allFilterChoices = [
         { label: 'Victim Corp(s)', value: 'corporations' },
         { label: 'Victim Character(s)', value: 'characters' },
@@ -121,7 +117,6 @@ module.exports = {
         { label: 'Attacker Alliance(s)', value: 'attacker_alliances' },
         { label: 'System(s)', value: 'systems' },
         { label: 'Ship Type(s)', value: 'shiptypes' },
-        // New filters
         { label: 'System Security Class', value: 'security_class' },
         { label: 'Max Lightyears from System', value: 'distance_from_system' },
         { label: 'Done - no more filters', value: 'done' }
@@ -132,7 +127,6 @@ module.exports = {
       let cache = { feedName, selectedFilters: [], createdAt: Date.now() };
       addfeedCache.set(cacheKey, cache);
 
-      // First reply for the interaction
       await interaction.reply({
         content: 'Select a filter to add (or select "Done - no more filters" to finish):',
         components: [
@@ -150,13 +144,11 @@ module.exports = {
 
       let doneSelectingFilters = false;
       while (!doneSelectingFilters) {
-        // Wait for select menu interaction
         const selectInt = await interaction.channel.awaitMessageComponent({
           filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters',
           time: 60000
         });
 
-        // Always defer reply for select menu to allow followUp
         if (!selectInt.replied && !selectInt.deferred) {
           await selectInt.deferReply({ ephemeral: true });
         }
@@ -172,7 +164,6 @@ module.exports = {
             cache.selectedFilters = selectedFilters;
             addfeedCache.set(cacheKey, cache);
 
-            // Prompt for value (send only once, not in both selectInt.reply and promptForText)
             const fieldDef = filterLogicFieldsMaster.find(o => o.inputKey === selected);
             let prompt;
             let idOnly = false;
@@ -193,7 +184,6 @@ module.exports = {
               idOnly = true;
               await promptForText(selectInt, prompt, cacheKey, selected, true, idOnly);
             } else if (selected === 'security_class') {
-              // Prompt for security class via select menu
               const securityRow = new ActionRowBuilder().addComponents(
                 new StringSelectMenuBuilder()
                   .setCustomId('addfeed-securityclass')
@@ -222,9 +212,7 @@ module.exports = {
               addfeedCache.set(cacheKey, cache);
               await secInt.followUp({ content: `Selected security classes: ${secInt.values.join(', ')}`, ephemeral: true });
             } else if (selected === 'distance_from_system') {
-              // Prompt for system ID (ID ONLY)
               await promptForText(selectInt, 'Enter the numeric system ID to measure from:', cacheKey, 'distance_from_system_id', false, true);
-              // Prompt for max distance (float)
               await promptForText(selectInt, 'Enter the maximum distance in lightyears (e.g. 10):', cacheKey, 'max_distance_ly', false);
             } else {
               prompt = `Enter value(s) for **${fieldDef ? fieldDef.label : selected}** (comma-separated, or leave blank for none):`;
@@ -234,8 +222,6 @@ module.exports = {
             await selectInt.followUp({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
           }
         }
-
-        // Present the select menu again (remove already-selected filters)
         const remainingOptions = allFilterChoices.filter(opt => !selectedFilters.includes(opt.value) || opt.value === 'done');
         if (!doneSelectingFilters) {
           await interaction.followUp({
@@ -254,19 +240,15 @@ module.exports = {
           });
         }
       }
-      // -----------------------------------------------------
 
-      // Step 4: Prompt for ISK/attacker limits (allow blank)
       await promptForText(interaction, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
       await promptForText(interaction, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
       await promptForText(interaction, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
       await promptForText(interaction, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
 
-      // Step 5: For each filter, ask for AND/OR/IF logic via select menu (skip logic for new filters)
       const logicModes = {};
       for (const filterField of selectedFilters) {
         const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
-        // Only do logic selection for entity filters (not for security class/distance)
         if (!logicField || ['securityClass', 'distanceFromSystem'].includes(logicField.key)) continue;
         const logicSelectRow = makeLogicSelect(`logicmode-${logicField.key}|${cacheKey}`, logicField.label);
         await interaction.followUp({
@@ -285,7 +267,6 @@ module.exports = {
         logicModes[logicField.key] = logicInt.values[0];
       }
 
-      // Step 6: Build filter object and save
       const cacheFinal = addfeedCache.get(cacheKey);
       const step1 = {
         feedName: cacheFinal.feedName,
@@ -307,7 +288,6 @@ module.exports = {
         min_attackers: cacheFinal.min_attackers || '',
         max_attackers: cacheFinal.max_attackers || ''
       };
-      // New filters
       const securityClass = cacheFinal.security_class || '';
       const distanceFromSystemId = cacheFinal.distance_from_system_id || '';
       const maxDistanceLy = cacheFinal.max_distance_ly || '';
@@ -354,7 +334,6 @@ function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, s
   filters.allianceIdsMode = logicModes?.allianceIds || 'OR';
   filters.regionIds = parseIdArray(step1.regions);
   filters.regionIdsMode = logicModes?.regionIds || 'OR';
-
   filters.attackerCorporationIds = parseIdArray(step2.attacker_corporations);
   filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
   filters.attackerCharacterIds = parseIdArray(step2.attacker_characters);
@@ -365,7 +344,6 @@ function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, s
   filters.systemIdsMode = logicModes?.systemIds || 'OR';
   filters.shipTypeIds = parseIdArray(step2.shiptypes);
   filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
-
   if (Array.isArray(activeLogicFields)) {
     for (const f of activeLogicFields) {
       if (logicModes && logicModes[f.key] !== undefined) {
@@ -373,7 +351,6 @@ function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, s
       }
     }
   }
-
   filters.minValue =
     step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
       ? parseFloat(step3.min_isk.replace(/,/g, ''))
@@ -390,8 +367,6 @@ function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, s
     step3.max_attackers && !isNaN(parseInt(step3.max_attackers))
       ? parseInt(step3.max_attackers)
       : undefined;
-
-  // New filter fields
   if (securityClass) {
     filters.securityClass = securityClass.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   }
@@ -401,6 +376,9 @@ function buildFilterObject(step1, step2, step3, logicModes, activeLogicFields, s
   if (maxDistanceLy && !isNaN(Number(maxDistanceLy))) {
     filters.maxDistanceLy = Number(maxDistanceLy);
   }
-
+  // Remove empty array fields so blank fields are ignored during filter matching
+  Object.keys(filters).forEach(key => {
+    if (Array.isArray(filters[key]) && filters[key].length === 0) delete filters[key];
+  });
   return filters;
 }
