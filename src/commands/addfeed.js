@@ -36,10 +36,13 @@ function makeLogicSelect(customId, label, defaultValue = 'OR') {
 }
 
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false) {
-  await interaction.followUp({
-    content: question,
-    ephemeral: true
-  });
+  // Only send a question if provided and not empty
+  if (typeof question === 'string' && question.trim().length > 0) {
+    await interaction.followUp({
+      content: question,
+      ephemeral: true
+    });
+  }
 
   const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
   try {
@@ -120,7 +123,6 @@ module.exports = {
       });
 
       let doneSelectingFilters = false;
-      let firstLoop = true;
       while (!doneSelectingFilters) {
         // Wait for select menu interaction
         const selectInt = await interaction.channel.awaitMessageComponent({
@@ -139,10 +141,10 @@ module.exports = {
             cache.selectedFilters = selectedFilters;
             addfeedCache.set(cacheKey, cache);
 
-            // Prompt for value
+            // Prompt for value (send only once, not in both selectInt.reply and promptForText)
             const label = filterLogicFieldsMaster.find(o => o.inputKey === selected)?.label || selected;
-            await selectInt.reply({ content: `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`, ephemeral: true });
-            await promptForText(selectInt, null, cacheKey, selected, true);
+            const prompt = `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`;
+            await promptForText(selectInt, prompt, cacheKey, selected, true);
           } else {
             await selectInt.reply({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
           }
@@ -150,20 +152,22 @@ module.exports = {
 
         // Present the select menu again (remove already-selected filters)
         const remainingOptions = allFilterChoices.filter(opt => !selectedFilters.includes(opt.value) || opt.value === 'done');
-        await interaction.followUp({
-          content: 'Select another filter to add, or "Done - no more filters":',
-          components: [
-            new ActionRowBuilder().addComponents(
-              new StringSelectMenuBuilder()
-                .setCustomId('addfeed-selectfilters')
-                .setPlaceholder('Select a filter')
-                .addOptions(remainingOptions)
-                .setMinValues(1)
-                .setMaxValues(1)
-            )
-          ],
-          ephemeral: true,
-        });
+        if (!doneSelectingFilters) {
+          await interaction.followUp({
+            content: 'Select another filter to add, or "Done - no more filters":',
+            components: [
+              new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                  .setCustomId('addfeed-selectfilters')
+                  .setPlaceholder('Select a filter')
+                  .addOptions(remainingOptions)
+                  .setMinValues(1)
+                  .setMaxValues(1)
+              )
+            ],
+            ephemeral: true,
+          });
+        }
       }
       // -----------------------------------------------------
 
