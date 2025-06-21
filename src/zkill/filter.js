@@ -2,7 +2,7 @@
  * Determines if a killmail matches the given filters.
  * The filter object uses normalized fields (arrays for IDs, numbers for minValue/minAttackers/maxAttackers, etc).
  *
- * @param {Object} killmail - The killmail object from RedisQ/zkillboard.
+ * @param {Object} killmail - The killmail object from RedisQ/zkillboard, normalized/flattened.
  * @param {Object} filters - The normalized filters object.
  * @returns {boolean} True if the killmail matches the filters, false otherwise.
  */
@@ -11,7 +11,7 @@ function filterKillmail(killmail, filters) {
   const hasActiveFilters = Object.values(filters).some(
     v => (Array.isArray(v) && v.length > 0) || (typeof v === 'number')
   );
-  if (!hasActiveFilters) return false; // <-- changed from true to false (only match if filters are set)
+  if (!hasActiveFilters) return false; // only match if filters are set
 
   const victim = killmail.victim || {};
   const attackers = killmail.attackers || [];
