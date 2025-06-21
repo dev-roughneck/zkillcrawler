@@ -215,6 +215,7 @@ async function resolveShipType(input) {
 async function resolveIds(input, type) {
   if (!input) return [];
   const entries = input.split(',').map(s => s.trim()).filter(Boolean);
+  if (entries.length === 0) return [];
   const ids = [];
   for (const entry of entries) {
     let obj = null;
