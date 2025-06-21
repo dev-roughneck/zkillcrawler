@@ -38,10 +38,11 @@ function makeLogicSelect(customId, label, defaultValue = 'OR') {
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false) {
   // Only send a question if provided and not empty
   if (typeof question === 'string' && question.trim().length > 0) {
-    await interaction.followUp({
-      content: question,
-      ephemeral: true
-    });
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: question, ephemeral: true });
+    } else {
+      await interaction.followUp({ content: question, ephemeral: true });
+    }
   }
 
   const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
@@ -49,7 +50,11 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
     const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
     const value = collected.first().content.trim();
     if (!allowBlank && !value) {
-      await interaction.followUp({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
+      } else {
+        await interaction.followUp({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
+      }
       addfeedCache.delete(cacheKey);
       throw new Error('Input is empty');
     }
@@ -58,7 +63,11 @@ async function promptForText(interaction, question, cacheKey, fieldKey, allowBla
     addfeedCache.set(cacheKey, cache);
     return value;
   } catch {
-    await interaction.followUp({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+    } else {
+      await interaction.followUp({ content: 'Timed out waiting for input. Please run /addfeed again.', ephemeral: true });
+    }
     addfeedCache.delete(cacheKey);
     throw new Error('Input timed out');
   }
@@ -130,10 +139,15 @@ module.exports = {
           time: 60000
         });
 
+        // Always defer reply for select menu to allow followUp
+        if (!selectInt.replied && !selectInt.deferred) {
+          await selectInt.deferReply({ ephemeral: true });
+        }
+
         const selected = selectInt.values[0];
         if (selected === 'done') {
+          await selectInt.followUp({ content: 'No more filters selected.', ephemeral: true });
           doneSelectingFilters = true;
-          await selectInt.reply({ content: 'No more filters selected.', ephemeral: true });
           break;
         } else {
           if (!selectedFilters.includes(selected)) {
@@ -146,7 +160,7 @@ module.exports = {
             const prompt = `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`;
             await promptForText(selectInt, prompt, cacheKey, selected, true);
           } else {
-            await selectInt.reply({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
+            await selectInt.followUp({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
           }
         }
 
@@ -192,7 +206,10 @@ module.exports = {
           filter: i => i.user.id === interaction.user.id && i.customId.startsWith(`logicmode-${logicField.key}|`),
           time: 60000
         });
-        await logicInt.reply({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
+        if (!logicInt.replied && !logicInt.deferred) {
+          await logicInt.deferReply({ ephemeral: true });
+        }
+        await logicInt.followUp({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
         logicModes[logicField.key] = logicInt.values[0];
       }
 
