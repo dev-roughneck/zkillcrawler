@@ -13,7 +13,7 @@ const {
   resolveRegion
 } = require('./eveuniverse');
 const { formatKillmailEmbed } = require('./embeds');
-const { filterKillmail } = require('./filter');
+const { filterKillmail } = require('./zkill/filter');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
