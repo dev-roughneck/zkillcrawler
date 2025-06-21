@@ -163,7 +163,13 @@ async function resolveSystem(input) {
     const url = `${ESI_BASE}/universe/systems/${input}/`;
     const data = await fetchWithRetry(url);
     if (data && data.solar_system_id) {
-      const result = { id: data.solar_system_id, name: data.name, region_id: data.region_id, position: data.position };
+      const result = {
+        id: data.solar_system_id,
+        name: data.name,
+        region_id: data.region_id,
+        position: data.position,
+        security_status: data.security_status ?? null, // << add this field!
+      };
       setCache('solar_system', input, result);
       return result;
     }
