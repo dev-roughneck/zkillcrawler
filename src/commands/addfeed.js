@@ -73,11 +73,12 @@ module.exports = {
   async execute(interaction) {
     try {
       // Step 1: Get feed name from slash command option
-      const feedName = interaction.options.getString('feedname').trim();
-      if (!feedName) {
-        await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
-        return;
-      }
+     const feedNameRaw = interaction.options.getString('feedname');
+const feedName = feedNameRaw ? feedNameRaw.trim() : '';
+if (!feedName) {
+  await interaction.reply({ content: 'Feed name is required. Please run /addfeed again.', ephemeral: true });
+  return;
+}
       if (feedExists(interaction.channel.id, feedName)) {
         await interaction.reply({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
         return;
