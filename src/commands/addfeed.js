@@ -36,6 +36,7 @@ function makeLogicSelect(customId, label, defaultValue = 'OR') {
 }
 
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false) {
+  // Always use followUp after the initial reply
   await interaction.followUp({
     content: question,
     ephemeral: true
@@ -85,6 +86,7 @@ module.exports = {
       }
 
       // Step 2: Present select menu for which filters to set
+      // FIRST interaction must be reply
       await interaction.reply({
         content: 'Select the filters you wish to set for this feed (you will provide values for each):',
         components: [
@@ -110,7 +112,12 @@ module.exports = {
       });
 
       // Wait for select menu interaction
-      const selectInt = await interaction.channel.awaitMessageComponent({ filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters', time: 60000 });
+      const selectInt = await interaction.channel.awaitMessageComponent({
+        filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters',
+        time: 60000
+      });
+      // FIRST response to selectInt must use reply
+      await selectInt.reply({ content: `You selected: ${selectInt.values.join(', ')}`, ephemeral: true });
       const selectedFilters = selectInt.values;
 
       // Cache initial state
@@ -121,7 +128,6 @@ module.exports = {
         createdAt: Date.now()
       };
       addfeedCache.set(cacheKey, cache);
-      await selectInt.followUp({ content: `You selected: ${selectedFilters.join(', ')}`, ephemeral: true });
 
       // Step 3: Prompt for each selected filter value (text-based)
       for (const filterField of selectedFilters) {
@@ -142,6 +148,7 @@ module.exports = {
         const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
         if (!logicField) continue;
         const logicSelectRow = makeLogicSelect(`logicmode-${logicField.key}|${cacheKey}`, logicField.label);
+        // FIRST reply on each logicInt must be reply, so we use awaitMessageComponent then .reply
         await selectInt.followUp({
           content: `Select logic for **${logicField.label}**:`,
           components: [logicSelectRow],
@@ -151,8 +158,8 @@ module.exports = {
           filter: i => i.user.id === interaction.user.id && i.customId.startsWith(`logicmode-${logicField.key}|`),
           time: 60000
         });
+        await logicInt.reply({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
         logicModes[logicField.key] = logicInt.values[0];
-        await logicInt.followUp({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
       }
 
       // Step 6: Build filter object and save
@@ -177,14 +184,25 @@ module.exports = {
         min_attackers: cacheFinal.min_attackers || '',
         max_attackers: cacheFinal.max_attackers || ''
       };
-      const filters = await buildFilterObject(step1, step2, step3, logicModes, filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey)));
+      const filters = await buildFilterObject(
+        step1,
+        step2,
+        step3,
+        logicModes,
+        filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey))
+      );
       setFeed(interaction.channel.id, feedName, { filters });
-      addfeedCache.delete(cacheKey);
       await selectInt.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
+      addfeedCache.delete(cacheKey);
     } catch (err) {
       console.error('Error in addfeed wizard:', err);
       try {
-        await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
+        // If initial interaction was already replied, use followUp, else reply
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
+        } else {
+          await interaction.reply({ content: 'An error occurred. Please try again.', ephemeral: true });
+        }
       } catch {}
     }
   }
@@ -220,10 +238,22 @@ async function buildFilterObject(step1, step2, step3, logicModes, activeLogicFie
     }
   }
 
-  filters.minValue = step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, ''))) ? parseFloat(step3.min_isk.replace(/,/g, '')) : undefined;
-  filters.maxValue = step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, ''))) ? parseFloat(step3.max_isk.replace(/,/g, '')) : undefined;
-  filters.minAttackers = step3.min_attackers && !isNaN(parseInt(step3.min_attackers)) ? parseInt(step3.min_attackers) : undefined;
-  filters.maxAttackers = step3.max_attackers && !isNaN(parseInt(step3.max_attackers)) ? parseInt(step3.max_attackers) : undefined;
+  filters.minValue =
+    step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
+      ? parseFloat(step3.min_isk.replace(/,/g, ''))
+      : undefined;
+  filters.maxValue =
+    step3.max_isk && !isNaN(parseFloat(step3.max_isk.replace(/,/g, '')))
+      ? parseFloat(step3.max_isk.replace(/,/g, ''))
+      : undefined;
+  filters.minAttackers =
+    step3.min_attackers && !isNaN(parseInt(step3.min_attackers))
+      ? parseInt(step3.min_attackers)
+      : undefined;
+  filters.maxAttackers =
+    step3.max_attackers && !isNaN(parseInt(step3.max_attackers))
+      ? parseInt(step3.max_attackers)
+      : undefined;
 
   return filters;
 }
