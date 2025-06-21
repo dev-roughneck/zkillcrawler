@@ -2,8 +2,6 @@ const {
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
 } = require('discord.js');
 const { setFeed, feedExists } = require('../feeds');
 const { resolveIds } = require('../eveuniverse');
@@ -44,9 +42,8 @@ function sessionExpired(cache) {
   return Date.now() - cache.createdAt > SESSION_TIMEOUT_MS;
 }
 
-async function promptForText(interaction, question, cacheKey, fieldKey) {
-  // Always send the prompt and wait for it to be sent before starting the collector!
-  const sentPrompt = await interaction.followUp({
+async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false) {
+  await interaction.followUp({
     content: question,
     ephemeral: true
   });
@@ -55,9 +52,8 @@ async function promptForText(interaction, question, cacheKey, fieldKey) {
   try {
     const collected = await interaction.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
     const value = collected.first().content.trim();
-    // Only proceed if value is not empty
-    if (!value) {
-      await interaction.followUp({ content: 'Value is required. Please run /addfeed again.', ephemeral: true });
+    if (!allowBlank && !value) {
+      await interaction.followUp({ content: `${fieldKey.replace(/_/g, ' ')} is required. Please run /addfeed again.`, ephemeral: true });
       addfeedCache.delete(cacheKey);
       throw new Error('Input is empty');
     }
@@ -76,7 +72,6 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('addfeed')
     .setDescription('Add a new zKillboard feed to this channel, with advanced filters.'),
-
   async execute(interaction) {
     try {
       // Step 1: Prompt for Feed Name
@@ -85,7 +80,6 @@ module.exports = {
         ephemeral: true
       });
 
-      // Wait for user reply (collector must be set after prompt is sent!)
       const filter = msg => msg.author.id === interaction.user.id && msg.channel.id === interaction.channel.id;
       let feedName;
       try {
@@ -103,6 +97,7 @@ module.exports = {
         await interaction.followUp({ content: `Feed \`${feedName}\` already exists in this channel.`, ephemeral: true });
         return;
       }
+
       // Step 2: Present select menu for which filters to set
       const filterOptions = [
         { label: 'Victim Corp(s)', value: 'corporations' },
@@ -128,9 +123,11 @@ module.exports = {
         ],
         ephemeral: true,
       });
+
       // Wait for select menu interaction
       const selectInt = await interaction.channel.awaitMessageComponent({ filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters', time: 60000 });
       const selectedFilters = selectInt.values;
+
       // Cache initial state
       const cacheKey = `${interaction.user.id}-${Date.now()}`;
       const cache = {
@@ -145,23 +142,15 @@ module.exports = {
       for (const filterField of selectedFilters) {
         const label = filterOptions.find(o => o.value === filterField).label;
         let prompt = `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`;
-        try {
-          await promptForText(selectInt, prompt, cacheKey, filterField);
-        } catch {
-          return; // Already handled by promptForText
-        }
+        // Allow blank for these fields to match your original design
+        await promptForText(selectInt, prompt, cacheKey, filterField, true);
       }
 
-      // Step 4: Prompt for ISK/attacker limits
-      let min_isk, max_isk, min_attackers, max_attackers;
-      try {
-        min_isk = await promptForText(selectInt, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk');
-        max_isk = await promptForText(selectInt, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk');
-        min_attackers = await promptForText(selectInt, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers');
-        max_attackers = await promptForText(selectInt, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers');
-      } catch {
-        return;
-      }
+      // Step 4: Prompt for ISK/attacker limits (allow blank)
+      await promptForText(selectInt, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
+      await promptForText(selectInt, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
+      await promptForText(selectInt, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
+      await promptForText(selectInt, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
 
       // Step 5: For each non-empty filter, ask for AND/OR/IF logic via select menu
       const logicModes = {};
