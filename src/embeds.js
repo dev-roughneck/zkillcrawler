@@ -12,43 +12,32 @@ const eveu = require('./eveuniverse');
 async function formatKillmailEmbed(killmail, filters = null) {
   const victim = killmail.victim || {};
   const zkb = killmail.zkb || {};
-  const attackers = killmail.attackers || [];
+  const attackers = Array.isArray(killmail.attackers) ? killmail.attackers : [];
   const finalBlow = attackers.find(a => a.final_blow) || {};
 
-  // Resolve victim
-  const [
-    victimChar,
-    victimCorp,
-    victimAlliance,
-    victimShip,
-    system,
-    region
-  ] = await Promise.all([
+  // --- Victim Resolution ---
+  let [victimChar, victimCorp, victimAlliance, victimShip, systemObj, regionObj] = await Promise.all([
     victim.character_id ? eveu.resolveCharacter(victim.character_id) : null,
     victim.corporation_id ? eveu.resolveCorporation(victim.corporation_id) : null,
     victim.alliance_id ? eveu.resolveAlliance(victim.alliance_id) : null,
     victim.ship_type_id ? eveu.resolveShipType(victim.ship_type_id) : null,
     killmail.solar_system_id ? eveu.resolveSystem(killmail.solar_system_id) : null,
-    // Region: try to resolve from system first if you don't have region_id in payload
-    killmail.region_id
-      ? eveu.resolveRegion(killmail.region_id)
-      : (killmail.solar_system_id
-          ? (async () => {
-              const sys = await eveu.resolveSystem(killmail.solar_system_id);
-              return sys && sys.region_id
-                ? eveu.resolveRegion(sys.region_id)
-                : null;
-            })()
-          : null),
+    null // regionObj will be resolved below
   ]);
-  const resolvedRegion = region && typeof region.then === 'function' ? await region : region;
 
-  // Victim character link
+  // --- Region Resolution ---
+  if (killmail.region_id) {
+    regionObj = await eveu.resolveRegion(killmail.region_id);
+  } else if (systemObj && systemObj.region_id) {
+    regionObj = await eveu.resolveRegion(systemObj.region_id);
+  }
+
+  // --- Links ---
   const victimCharLink = victimChar
     ? `[${victimChar.name}](https://evewho.com/character/${victimChar.id})`
     : (victim.character_id ? `[${victim.character_id}](https://evewho.com/character/${victim.character_id})` : 'Unknown');
 
-  // Final blow attacker (resolve IDs to names)
+  // --- Final blow attacker ---
   let finalAttackerChar, finalAttackerCorp, finalAttackerAlliance, finalAttackerShip, finalAttackerWeapon;
   if (finalBlow && (finalBlow.character_id || finalBlow.corporation_id || finalBlow.alliance_id)) {
     [finalAttackerChar, finalAttackerCorp, finalAttackerAlliance, finalAttackerShip, finalAttackerWeapon] = await Promise.all([
@@ -56,14 +45,14 @@ async function formatKillmailEmbed(killmail, filters = null) {
       finalBlow.corporation_id ? eveu.resolveCorporation(finalBlow.corporation_id) : null,
       finalBlow.alliance_id ? eveu.resolveAlliance(finalBlow.alliance_id) : null,
       finalBlow.ship_type_id ? eveu.resolveShipType(finalBlow.ship_type_id) : null,
-      finalBlow.weapon_type_id ? eveu.resolveShipType(finalBlow.weapon_type_id) : null, // ShipType for weapon works, or add resolveWeaponType if you want
+      finalBlow.weapon_type_id ? eveu.resolveShipType(finalBlow.weapon_type_id) : null,
     ]);
   }
 
-  // ISK Value
+  // --- Values ---
   const iskValue = zkb.totalValue ? `${Math.round(zkb.totalValue).toLocaleString()} ISK` : 'Unknown';
 
-  // Ship image (left side, wide format)
+  // Ship image (left side)
   const shipImage = victimShip
     ? `https://images.evetech.net/types/${victimShip.id}/render?size=256`
     : null;
@@ -81,14 +70,14 @@ async function formatKillmailEmbed(killmail, filters = null) {
   const killUrl = killID ? `https://zkillboard.com/kill/${killID}/` : "https://zkillboard.com/";
 
   // System w/ region
-  const systemStr = system && system.name
-    ? resolvedRegion && resolvedRegion.name
-      ? `${system.name} (${resolvedRegion.name})`
-      : system.name
+  const systemStr = systemObj && systemObj.name
+    ? regionObj && regionObj.name
+      ? `${systemObj.name} (${regionObj.name})`
+      : systemObj.name
     : "Unknown";
 
   // System security status/class
-  let systemSec = typeof system?.security_status === 'number' ? system.security_status : null;
+  let systemSec = typeof systemObj?.security_status === 'number' ? systemObj.security_status : null;
   let secClass = "Unknown";
   if (typeof systemSec === 'number') {
     if (systemSec >= 0.5) secClass = 'High Sec';
@@ -103,11 +92,11 @@ async function formatKillmailEmbed(killmail, filters = null) {
     filters &&
     typeof filters.distanceFromSystemId === 'number' &&
     typeof filters.maxDistanceLy === 'number' &&
-    system &&
-    system.id
+    systemObj &&
+    systemObj.id
   ) {
     try {
-      const dist = await eveu.calculateLyDistance(filters.distanceFromSystemId, system.id);
+      const dist = await eveu.calculateLyDistance(filters.distanceFromSystemId, systemObj.id);
       if (dist !== null) {
         lyDistanceStr = `${dist.toFixed(2)} ly from ${filters.distanceFromSystemName || "reference system"}`;
       }
@@ -128,7 +117,7 @@ async function formatKillmailEmbed(killmail, filters = null) {
     `Ship: ${finalAttackerShip?.name || finalBlow.ship_type_id || "Unknown"}\n` +
     `Weapon: ${finalAttackerWeapon?.name || finalBlow.weapon_type_id || "Unknown"}`;
 
-  // Build the embed (wide format: all main info as inline fields, logo as image, ship as thumbnail)
+  // Build the embed
   const embed = new EmbedBuilder()
     .setTitle(`Killmail: ${killID}`)
     .setURL(killUrl)
@@ -158,6 +147,14 @@ async function formatKillmailEmbed(killmail, filters = null) {
   if (timestamp && !isNaN(timestamp.getTime())) {
     embed.setTimestamp(timestamp);
   }
+
+  // Debug logging for unresolved info
+  if (!victimChar) console.warn('[EMBED] Victim character unresolved', victim.character_id);
+  if (!victimCorp) console.warn('[EMBED] Victim corp unresolved', victim.corporation_id);
+  if (!victimAlliance && victim.alliance_id) console.warn('[EMBED] Victim alliance unresolved', victim.alliance_id);
+  if (!victimShip) console.warn('[EMBED] Victim ship unresolved', victim.ship_type_id);
+  if (!systemObj) console.warn('[EMBED] System unresolved', killmail.solar_system_id);
+  if (!regionObj) console.warn('[EMBED] Region unresolved', killmail.region_id, systemObj?.region_id);
 
   return embed;
 }
