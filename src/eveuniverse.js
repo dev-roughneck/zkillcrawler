@@ -168,8 +168,16 @@ async function resolveSystem(input) {
         name: data.name,
         region_id: data.region_id,
         position: data.position,
-        security_status: data.security_status ?? null, // << add this field!
+        security_status: data.security_status ?? null,
       };
+      setCache('solar_system', input, result);
+      return result;
+    }
+    // --- NEW: Try fallback using /universe/names/ if API returns null ---
+    const batchFallback = await idsToNames([input]);
+    const entity = batchFallback.find(e => e.category === 'solar_system' && e.id == input);
+    if (entity) {
+      const result = { id: entity.id, name: entity.name, region_id: null, position: null, security_status: null };
       setCache('solar_system', input, result);
       return result;
     }
@@ -189,6 +197,18 @@ async function resolveShipType(input) {
       const result = { id: data.type_id, name: data.name };
       setCache('shiptype', input, result);
       return result;
+    }
+    // --- NEW: Try fallback using /universe/names/ if API returns null ---
+    const batchFallback = await idsToNames([input]);
+    const entity = batchFallback.find(e => e.category === 'inventory_type' && e.id == input);
+    if (entity) {
+      // But we only want ships (category_id === 6), so double-check
+      const t = await fetchWithRetry(`${ESI_BASE}/universe/types/${entity.id}/`);
+      if (t && t.category_id === 6) {
+        const result = { id: t.type_id, name: t.name };
+        setCache('shiptype', input, result);
+        return result;
+      }
     }
     return null;
   }
