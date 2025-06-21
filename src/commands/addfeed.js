@@ -36,7 +36,6 @@ function makeLogicSelect(customId, label, defaultValue = 'OR') {
 }
 
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false) {
-  // Always use followUp after the initial reply
   await interaction.followUp({
     content: question,
     ephemeral: true
@@ -85,62 +84,94 @@ module.exports = {
         return;
       }
 
-      // Step 2: Present select menu for which filters to set
-      // FIRST interaction must be reply
+      // --------- Multi-step filter selection loop ---------
+      const allFilterChoices = [
+        { label: 'Victim Corp(s)', value: 'corporations' },
+        { label: 'Victim Character(s)', value: 'characters' },
+        { label: 'Victim Alliance(s)', value: 'alliances' },
+        { label: 'Region(s)', value: 'regions' },
+        { label: 'Attacker Corp(s)', value: 'attacker_corporations' },
+        { label: 'Attacker Character(s)', value: 'attacker_characters' },
+        { label: 'Attacker Alliance(s)', value: 'attacker_alliances' },
+        { label: 'System(s)', value: 'systems' },
+        { label: 'Ship Type(s)', value: 'shiptypes' },
+        { label: 'Done - no more filters', value: 'done' }
+      ];
+
+      const cacheKey = `${interaction.user.id}-${Date.now()}`;
+      let selectedFilters = [];
+      let cache = { feedName, selectedFilters: [], createdAt: Date.now() };
+      addfeedCache.set(cacheKey, cache);
+
+      // First reply for the interaction
       await interaction.reply({
-        content: 'Select the filters you wish to set for this feed (you will provide values for each):',
+        content: 'Select a filter to add (or select "Done - no more filters" to finish):',
         components: [
           new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
               .setCustomId('addfeed-selectfilters')
-              .setPlaceholder('Select filters')
-              .addOptions([
-                { label: 'Victim Corp(s)', value: 'corporations' },
-                { label: 'Victim Character(s)', value: 'characters' },
-                { label: 'Victim Alliance(s)', value: 'alliances' },
-                { label: 'Region(s)', value: 'regions' },
-                { label: 'Attacker Corp(s)', value: 'attacker_corporations' },
-                { label: 'Attacker Character(s)', value: 'attacker_characters' },
-                { label: 'Attacker Alliance(s)', value: 'attacker_alliances' },
-                { label: 'System(s)', value: 'systems' },
-                { label: 'Ship Type(s)', value: 'shiptypes' }
-              ])
+              .setPlaceholder('Select a filter')
+              .addOptions(allFilterChoices)
               .setMinValues(1)
+              .setMaxValues(1)
           )
         ],
         ephemeral: true,
       });
 
-      // Wait for select menu interaction
-      const selectInt = await interaction.channel.awaitMessageComponent({
-        filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters',
-        time: 60000
-      });
-      // FIRST response to selectInt must use reply
-      await selectInt.reply({ content: `You selected: ${selectInt.values.join(', ')}`, ephemeral: true });
-      const selectedFilters = selectInt.values;
+      let doneSelectingFilters = false;
+      let firstLoop = true;
+      while (!doneSelectingFilters) {
+        // Wait for select menu interaction
+        const selectInt = await interaction.channel.awaitMessageComponent({
+          filter: i => i.user.id === interaction.user.id && i.customId === 'addfeed-selectfilters',
+          time: 60000
+        });
 
-      // Cache initial state
-      const cacheKey = `${interaction.user.id}-${Date.now()}`;
-      const cache = {
-        feedName,
-        selectedFilters,
-        createdAt: Date.now()
-      };
-      addfeedCache.set(cacheKey, cache);
+        const selected = selectInt.values[0];
+        if (selected === 'done') {
+          doneSelectingFilters = true;
+          await selectInt.reply({ content: 'No more filters selected.', ephemeral: true });
+          break;
+        } else {
+          if (!selectedFilters.includes(selected)) {
+            selectedFilters.push(selected);
+            cache.selectedFilters = selectedFilters;
+            addfeedCache.set(cacheKey, cache);
 
-      // Step 3: Prompt for each selected filter value (text-based)
-      for (const filterField of selectedFilters) {
-        const label = filterLogicFieldsMaster.find(o => o.inputKey === filterField)?.label || filterField;
-        let prompt = `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`;
-        await promptForText(selectInt, prompt, cacheKey, filterField, true);
+            // Prompt for value
+            const label = filterLogicFieldsMaster.find(o => o.inputKey === selected)?.label || selected;
+            await selectInt.reply({ content: `Enter value(s) for **${label}** (comma-separated, or leave blank for none):`, ephemeral: true });
+            await promptForText(selectInt, null, cacheKey, selected, true);
+          } else {
+            await selectInt.reply({ content: `You already selected this filter. Please choose a different one.`, ephemeral: true });
+          }
+        }
+
+        // Present the select menu again (remove already-selected filters)
+        const remainingOptions = allFilterChoices.filter(opt => !selectedFilters.includes(opt.value) || opt.value === 'done');
+        await interaction.followUp({
+          content: 'Select another filter to add, or "Done - no more filters":',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId('addfeed-selectfilters')
+                .setPlaceholder('Select a filter')
+                .addOptions(remainingOptions)
+                .setMinValues(1)
+                .setMaxValues(1)
+            )
+          ],
+          ephemeral: true,
+        });
       }
+      // -----------------------------------------------------
 
       // Step 4: Prompt for ISK/attacker limits (allow blank)
-      await promptForText(selectInt, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
-      await promptForText(selectInt, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
-      await promptForText(selectInt, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
-      await promptForText(selectInt, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
+      await promptForText(interaction, 'Enter minimum ISK value (or leave blank):', cacheKey, 'min_isk', true);
+      await promptForText(interaction, 'Enter maximum ISK value (or leave blank):', cacheKey, 'max_isk', true);
+      await promptForText(interaction, 'Enter minimum attackers (or leave blank):', cacheKey, 'min_attackers', true);
+      await promptForText(interaction, 'Enter maximum attackers (or leave blank):', cacheKey, 'max_attackers', true);
 
       // Step 5: For each filter, ask for AND/OR/IF logic via select menu
       const logicModes = {};
@@ -148,8 +179,7 @@ module.exports = {
         const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
         if (!logicField) continue;
         const logicSelectRow = makeLogicSelect(`logicmode-${logicField.key}|${cacheKey}`, logicField.label);
-        // FIRST reply on each logicInt must be reply, so we use awaitMessageComponent then .reply
-        await selectInt.followUp({
+        await interaction.followUp({
           content: `Select logic for **${logicField.label}**:`,
           components: [logicSelectRow],
           ephemeral: true
@@ -192,12 +222,11 @@ module.exports = {
         filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey))
       );
       setFeed(interaction.channel.id, feedName, { filters });
-      await selectInt.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
+      await interaction.followUp({ content: `Feed \`${feedName}\` created and saved!`, ephemeral: true });
       addfeedCache.delete(cacheKey);
     } catch (err) {
       console.error('Error in addfeed wizard:', err);
       try {
-        // If initial interaction was already replied, use followUp, else reply
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({ content: 'An error occurred. Please try again.', ephemeral: true });
         } else {
