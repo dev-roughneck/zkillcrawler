@@ -6,35 +6,20 @@ const {
 const { setFeed, feedExists } = require('../feeds');
 
 const filterLogicFieldsMaster = [
-  { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations', step: 1 },
-  { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters', step: 1 },
-  { key: 'allianceIds', label: 'Victim Alliance(s)', inputKey: 'alliances', step: 1 },
-  { key: 'regionIds', label: 'Region(s)', inputKey: 'regions', step: 1 },
-  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)', inputKey: 'attacker_corporations', step: 2 },
-  { key: 'attackerCharacterIds', label: 'Attacker Character(s)', inputKey: 'attacker_characters', step: 2 },
-  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances', step: 2 },
-  { key: 'systemIds', label: 'System(s)', inputKey: 'systems', step: 2 },
-  { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes', step: 2 },
-  { key: 'securityClass', label: 'System Security Class', inputKey: 'security_class', step: 2 },
-  { key: 'distanceFromSystem', label: 'Max Lightyears from System', inputKey: 'distance_from_system', step: 2 },
+  { key: 'corporationIds', label: 'Victim Corp(s)', inputKey: 'corporations' },
+  { key: 'characterIds', label: 'Victim Character(s)', inputKey: 'characters' },
+  { key: 'allianceIds', label: 'Victim Alliance(s)', inputKey: 'alliances' },
+  { key: 'regionIds', label: 'Region(s)', inputKey: 'regions' },
+  { key: 'attackerCorporationIds', label: 'Attacker Corp(s)', inputKey: 'attacker_corporations' },
+  { key: 'attackerCharacterIds', label: 'Attacker Character(s)', inputKey: 'attacker_characters' },
+  { key: 'attackerAllianceIds', label: 'Attacker Alliance(s)', inputKey: 'attacker_alliances' },
+  { key: 'systemIds', label: 'System(s)', inputKey: 'systems' },
+  { key: 'shipTypeIds', label: 'Ship Type(s)', inputKey: 'shiptypes' },
+  { key: 'securityClass', label: 'System Security Class', inputKey: 'security_class' },
+  { key: 'distanceFromSystem', label: 'Max Lightyears from System', inputKey: 'distance_from_system' },
 ];
 
 const addfeedCache = new Map();
-
-function makeLogicSelect(customId, label, defaultValue = 'OR') {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(customId)
-      .setPlaceholder(`Choose logic for ${label}`)
-      .setMinValues(1)
-      .setMaxValues(1)
-      .addOptions([
-        { label: 'OR (match any)', value: 'OR', default: defaultValue === 'OR' },
-        { label: 'AND (match all)', value: 'AND', default: defaultValue === 'AND' },
-        { label: 'IF (match if present)', value: 'IF', default: defaultValue === 'IF' }
-      ])
-  );
-}
 
 async function promptForText(interaction, question, cacheKey, fieldKey, allowBlank = false, idOnly = false) {
   let msg = question;
@@ -95,34 +80,18 @@ function parseIdArray(str) {
 }
 
 function buildFilterObject(
-  step1, step2, step3, logicModes, activeLogicFields, securityClass, distanceFromSystemId, maxDistanceLy
+  step1, step2, step3, securityClass, distanceFromSystemId, maxDistanceLy
 ) {
   const filters = {};
   filters.corporationIds = parseIdArray(step1.corporations);
-  filters.corporationIdsMode = logicModes?.corporationIds || 'OR';
   filters.characterIds = parseIdArray(step1.characters);
-  filters.characterIdsMode = logicModes?.characterIds || 'OR';
   filters.allianceIds = parseIdArray(step1.alliances);
-  filters.allianceIdsMode = logicModes?.allianceIds || 'OR';
   filters.regionIds = parseIdArray(step1.regions);
-  filters.regionIdsMode = logicModes?.regionIds || 'OR';
   filters.attackerCorporationIds = parseIdArray(step2.attacker_corporations);
-  filters.attackerCorporationIdsMode = logicModes?.attackerCorporationIds || 'OR';
   filters.attackerCharacterIds = parseIdArray(step2.attacker_characters);
-  filters.attackerCharacterIdsMode = logicModes?.attackerCharacterIds || 'OR';
   filters.attackerAllianceIds = parseIdArray(step2.attacker_alliances);
-  filters.attackerAllianceIdsMode = logicModes?.attackerAllianceIds || 'OR';
   filters.systemIds = parseIdArray(step2.systems);
-  filters.systemIdsMode = logicModes?.systemIds || 'OR';
   filters.shipTypeIds = parseIdArray(step2.shiptypes);
-  filters.shipTypeIdsMode = logicModes?.shipTypeIds || 'OR';
-  if (Array.isArray(activeLogicFields)) {
-    for (const f of activeLogicFields) {
-      if (logicModes && logicModes[f.key] !== undefined) {
-        filters[`${f.key}Mode`] = logicModes[f.key];
-      }
-    }
-  }
   filters.minValue =
     step3.min_isk && !isNaN(parseFloat(step3.min_isk.replace(/,/g, '')))
       ? parseFloat(step3.min_isk.replace(/,/g, ''))
@@ -348,34 +317,10 @@ module.exports = {
       const distanceFromSystemId = cacheFinal2.distance_from_system_id || '';
       const maxDistanceLy = cacheFinal2.max_distance_ly || '';
 
-      // Gather logic modes
-      const logicModes = {};
-      for (const filterField of selectedFilters) {
-        const logicField = filterLogicFieldsMaster.find(f => f.inputKey === filterField);
-        if (!logicField || ['securityClass', 'distanceFromSystem'].includes(logicField.key)) continue;
-        const logicSelectRow = makeLogicSelect(`logicmode-${logicField.key}|${cacheKey}`, logicField.label);
-        await interaction.followUp({
-          content: `Select logic for **${logicField.label}**:`,
-          components: [logicSelectRow],
-          ephemeral: true
-        });
-        const logicInt = await interaction.channel.awaitMessageComponent({
-          filter: i => i.user.id === interaction.user.id && i.customId.startsWith(`logicmode-${logicField.key}|`),
-          time: 60000
-        });
-        if (!logicInt.replied && !logicInt.deferred) {
-          await logicInt.deferReply({ ephemeral: true });
-        }
-        await logicInt.followUp({ content: `Set logic for ${logicField.label}: ${logicInt.values[0]}`, ephemeral: true });
-        logicModes[logicField.key] = logicInt.values[0];
-      }
-
       const filters = buildFilterObject(
         step1,
         step2,
         step3,
-        logicModes,
-        filterLogicFieldsMaster.filter(f => selectedFilters.includes(f.inputKey)),
         securityClass,
         distanceFromSystemId,
         maxDistanceLy
